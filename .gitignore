@@ -1,0 +1,17 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+# Build products and package output
+build/
+dist/
+macos-native-gui/.build/
+
+# Runtime/generated solver outputs
+output/
+native-macos/output/
+solution-finder-1.43/output/
+solution-finder/output/
+
+# Local editor/runtime noise
+*.log
