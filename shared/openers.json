@@ -1,625 +1,617 @@
 {
-  "openers": [
+  "openers" : [
     {
-      "cells": [
+      "cells" : [
 
       ],
-      "id": "empty",
-      "name": "Empty board",
-      "openerName": "Empty board",
-      "variationName": "Empty"
+      "id" : "empty",
+      "name" : "Empty board",
+      "openerName" : "Empty board",
+      "variationName" : "Empty"
     },
     {
-      "code": "v115@9gwhDeR4CewhilR4CeAtwhgli0RpAeBtwhCeg0RpAe?AtKeAgH",
-      "id": "albatross-base",
-      "name": "Albatross Base",
-      "openerName": "Albatross",
-      "variationName": "Base"
+      "code" : "v115@9gwhDeR4CewhilR4CeAtwhgli0RpAeBtwhCeg0RpAe?AtKeAgH",
+      "id" : "albatross-base",
+      "name" : "Albatross Base",
+      "openerName" : "Albatross",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@pgwhIewhCeQ4Aeh0BewhCeR4g0CewhCeAtQ4g0Aehl?A8RpBtB8BeglA8RpAtC8AeA8glJeAgH",
-      "id": "albatross-greed-variation",
-      "name": "Albatross Greed Variation",
-      "openerName": "Albatross",
-      "variationName": "Greed Variation"
+      "code" : "v115@pgwhIewhCeQ4Aeh0BewhCeR4g0CewhCeAtQ4g0Aehl?A8RpBtB8BeglA8RpAtC8AeA8glJeAgH",
+      "id" : "albatross-greed-variation",
+      "name" : "Albatross Greed Variation",
+      "openerName" : "Albatross",
+      "variationName" : "Greed Variation"
     },
     {
-      "code": "v115@9gilDeR4whglh0CeR4AtwhA8g0RpAeB8BtwhA8g0Rp?C8AtA8whJeAgH",
-      "id": "albatross-perfect-clear-attempt",
-      "name": "Albatross Perfect Clear Attempt",
-      "openerName": "Albatross",
-      "variationName": "Perfect Clear Attempt"
+      "code" : "v115@9gilDeR4whglh0CeR4AtwhA8g0RpAeB8BtwhA8g0Rp?C8AtA8whJeAgH",
+      "id" : "albatross-perfect-clear-attempt",
+      "name" : "Albatross Perfect Clear Attempt",
+      "openerName" : "Albatross",
+      "variationName" : "Perfect Clear Attempt"
     },
     {
-      "code": "v115@3gQ4Aeh0FeR4g0CezhAtQ4g0AehlA8RpBtB8BeglA8?RpAtC8AeA8glJeAgH",
-      "id": "albatross-standard",
-      "name": "Albatross Standard",
-      "openerName": "Albatross",
-      "variationName": "Standard"
+      "code" : "v115@3gQ4Aeh0FeR4g0CezhAtQ4g0AehlA8RpBtB8BeglA8?RpAtC8AeA8glJeAgH",
+      "id" : "albatross-standard",
+      "name" : "Albatross Standard",
+      "openerName" : "Albatross",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@9gilEeQ4AeglRpAewwCeR4g0RpywAeBtQ4i0zhAeBt?JeAgH9gCtGewhAeQpAewSEewSAeQaxSEeSLAeCtMeAAA9gQ?LxSGegWAewSGegWQpIeywPeAAA",
-      "id": "bt-cannon-base",
-      "name": "BT Cannon Base",
-      "openerName": "BT Cannon",
-      "variationName": "Base"
+      "code" : "v115@9gilEeQ4AeglRpAewwCeR4g0RpywAeBtQ4i0zhAeBt?JeAgH9gCtGewhAeQpAewSEewSAeQaxSEeSLAeCtMeAAA9gQ?LxSGegWAewSGegWQpIeywPeAAA",
+      "id" : "bt-cannon-base",
+      "name" : "BT Cannon Base",
+      "openerName" : "BT Cannon",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@zgQ4IeR4RpwhBeBtAeg0Q4RpwhglBeBti0A8whglAe?G8whhlAeB8JeAgHzggHIegHQLBeg0EeRLBeg0wwDeQLBPAe?xwHewwBtMeAAA",
-      "id": "bt-cannon-c-spin-type-a",
-      "name": "BT Cannon C-Spin Type A",
-      "openerName": "BT Cannon",
-      "variationName": "C-Spin Type A"
+      "code" : "v115@zgQ4IeR4RpwhBeBtAeg0Q4RpwhglBeBti0A8whglAe?G8whhlAeB8JeAgHzggHIegHQLBeg0EeRLBeg0wwDeQLBPAe?xwHewwBtMeAAA",
+      "id" : "bt-cannon-c-spin-type-a",
+      "name" : "BT Cannon C-Spin Type A",
+      "openerName" : "BT Cannon",
+      "variationName" : "C-Spin Type A"
     },
     {
-      "code": "v115@1gQ4Geh0R4whBeBtAeg0RpQ4whglBeBtg0RpA8whgl?AeG8whhlAeB8JeAgH",
-      "id": "bt-cannon-c-spin-type-b",
-      "name": "BT Cannon C-Spin Type B",
-      "openerName": "BT Cannon",
-      "variationName": "C-Spin Type B"
+      "code" : "v115@1gQ4Geh0R4whBeBtAeg0RpQ4whglBeBtg0RpA8whgl?AeG8whhlAeB8JeAgH",
+      "id" : "bt-cannon-c-spin-type-b",
+      "name" : "BT Cannon C-Spin Type B",
+      "openerName" : "BT Cannon",
+      "variationName" : "C-Spin Type B"
     },
     {
-      "code": "v115@igAtCehlwhRpBtDeglwhRpAth0R4AeglwhC8g0R4Be?A8whC8g0A8CeH8AeJ8AeB8JeAgH",
-      "id": "bt-cannon-follow-up-a",
-      "name": "BT Cannon Follow-up A",
-      "openerName": "BT Cannon",
-      "variationName": "Follow-up A"
+      "code" : "v115@igAtCehlwhRpBtDeglwhRpAth0R4AeglwhC8g0R4Be?A8whC8g0A8CeH8AeJ8AeB8JeAgH",
+      "id" : "bt-cannon-follow-up-a",
+      "name" : "BT Cannon Follow-up A",
+      "openerName" : "BT Cannon",
+      "variationName" : "Follow-up A"
     },
     {
-      "code": "v115@igAtCei0RpBtDeQ4g0RpAtzhAeR4C8ilBeA8Q4C8gl?A8CeH8AeJ8AeB8JeAgH",
-      "id": "bt-cannon-follow-up-b",
-      "name": "BT Cannon Follow-up B",
-      "openerName": "BT Cannon",
-      "variationName": "Follow-up B"
+      "code" : "v115@igAtCei0RpBtDeQ4g0RpAtzhAeR4C8ilBeA8Q4C8gl?A8CeH8AeJ8AeB8JeAgH",
+      "id" : "bt-cannon-follow-up-b",
+      "name" : "BT Cannon Follow-up B",
+      "openerName" : "BT Cannon",
+      "variationName" : "Follow-up B"
     },
     {
-      "code": "v115@pgh0Heg0Ieg0AeywEeglBewwQ4CeRpglAeBtR4BeRp?hlAeBtQ4zhJeAgH",
-      "id": "c-spin-base",
-      "name": "C-Spin Base",
-      "openerName": "C-Spin",
-      "variationName": "Base"
+      "code" : "v115@pgh0Heg0Ieg0AeywEeglBewwQ4CeRpglAeBtR4BeRp?hlAeBtQ4zhJeAgH",
+      "id" : "c-spin-base",
+      "name" : "C-Spin Base",
+      "openerName" : "C-Spin",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@egg0Ieg0B8BeQ4hlwhh0A8CeR4glwhRpA8AeC8Q4gl?whRpA8BeB8BtwhC8AeD8BtD8AeG8JeAgH",
-      "id": "c-spin-standard",
-      "name": "C-Spin Standard",
-      "openerName": "C-Spin",
-      "variationName": "Standard"
+      "code" : "v115@egg0Ieg0B8BeQ4hlwhh0A8CeR4glwhRpA8AeC8Q4gl?whRpA8BeB8BtwhC8AeD8BtD8AeG8JeAgH",
+      "id" : "c-spin-standard",
+      "name" : "C-Spin Standard",
+      "openerName" : "C-Spin",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@pgh0Heg0Ieg0FeQ4BeglBewwAeBtR4AeglAexwRpBt?Q4AehlAewwRpzhJeAgH",
-      "id": "c-spin-tki-signature-base",
-      "name": "C-Spin TKI Signature, Base",
-      "openerName": "C-Spin",
-      "variationName": "TKI Signature, Base"
+      "code" : "v115@pgh0Heg0Ieg0FeQ4BeglBewwAeBtR4AeglAexwRpBt?Q4AehlAewwRpzhJeAgH",
+      "id" : "c-spin-tki-signature-base",
+      "name" : "C-Spin TKI Signature, Base",
+      "openerName" : "C-Spin",
+      "variationName" : "TKI Signature, Base"
     },
     {
-      "code": "v115@BgwhIewhIewhIewhDeAtQ4CeB8BeBtR4BeA8CeAtRp?Q4BeA8Aei0RpA8hlA8BeA8g0D8glA8AeG8glB8AeG8JeAgH?lgwSGeRaxSFeQaAeAtHeBtqeAAAkgRpGeBtRaFexhBPGexS?qeAAAkgBPHeAPAewhFeRpxhGeQpreAAA",
-      "id": "c-spin-tki-signature-standard",
-      "name": "C-Spin TKI Signature, Standard",
-      "openerName": "C-Spin",
-      "variationName": "TKI Signature, Standard"
+      "code" : "v115@BgwhIewhIewhIewhDeAtQ4CeB8BeBtR4BeA8CeAtRp?Q4BeA8Aei0RpA8hlA8BeA8g0D8glA8AeG8glB8AeG8JeAgH?lgwSGeRaxSFeQaAeAtHeBtqeAAAkgRpGeBtRaFexhBPGexS?qeAAAkgBPHeAPAewhFeRpxhGeQpreAAA",
+      "id" : "c-spin-tki-signature-standard",
+      "name" : "C-Spin TKI Signature, Standard",
+      "openerName" : "C-Spin",
+      "variationName" : "TKI Signature, Standard"
     },
     {
-      "code": "v115@vhAAgH",
-      "id": "dpc-patterns-base",
-      "name": "DPC Patterns Base",
-      "openerName": "DPC Patterns",
-      "variationName": "Base",
-      "earlyVariantDetection": true
+      "code" : "v115@vhAAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-base",
+      "name" : "DPC Patterns Base",
+      "openerName" : "DPC Patterns",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@4gglGeilDeQ4CeAt0hR4AeBtyhRpAeQ4AeAtD8RpJe?AgH",
-      "id": "dpc-patterns-fake-butter-i",
-      "name": "DPC Patterns Fake Butter, I",
-      "openerName": "DPC Patterns",
-      "variationName": "Fake Butter, I",
-      "earlyVariantDetection": true
+      "code" : "v115@1gAtGewhBtGewhAtCeR4i0whRpAeR4glRpg0whRpAe?ilRpKeAgHQhgWGeQpwhgWGeQpwhKeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-double-heart",
+      "name" : "DPC Patterns Double Heart",
+      "openerName" : "DPC Patterns",
+      "variationName" : "Double Heart"
     },
     {
-      "code": "v115@3gwhIeyhCeTpglQ4CeAtTpglR4AeBtzhhlQ4AeAtKe?AgH",
-      "id": "dpc-patterns-fake-butter-o",
-      "name": "DPC Patterns Fake Butter, O",
-      "openerName": "DPC Patterns",
-      "variationName": "Fake Butter, O",
-      "earlyVariantDetection": true
+      "code" : "v115@4gglGeilDeQ4CeAt0hR4AeBtyhRpAeQ4AeAtD8RpJe?AgHMhwwjlEewwhlFehWxDhWJeAAANhjWPejlJeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-fake-butter",
+      "name" : "DPC Patterns Fake Butter",
+      "openerName" : "DPC Patterns",
+      "variationName" : "Fake Butter"
     },
     {
-      "code": "v115@AhhlAeAtBewhQ4CeglBtRpwhR4Aeg0glAtg0RpwhAe?Q4Ael0whJeAgH",
-      "id": "dpc-patterns-j-standard",
-      "name": "DPC Patterns J, Standard",
-      "openerName": "DPC Patterns",
-      "variationName": "J, Standard",
-      "earlyVariantDetection": true
+      "code" : "v115@AhhlAeAtBewhQ4CeglBtRpwhR4Aeg0glAtg0RpwhAe?Q4Ael0whJeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-j-standard",
+      "name" : "DPC Patterns J, Standard",
+      "openerName" : "DPC Patterns",
+      "variationName" : "J, Standard"
     },
     {
-      "code": "v115@0gg0GewhAeg0Eehlwhh0Q4BtCeglwhRpR4BtAeg0gl?whRpAeQ4Cei0JeAgH",
-      "id": "dpc-patterns-j-variation-1",
-      "name": "DPC Patterns J, Variation 1",
-      "openerName": "DPC Patterns",
-      "variationName": "J, Variation 1",
-      "earlyVariantDetection": true
+      "code" : "v115@0gg0GewhAeg0Eehlwhh0Q4BtCeglwhRpR4BtAeg0gl?whRpAeQ4Cei0JeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-j-variation-1",
+      "name" : "DPC Patterns J, Variation 1",
+      "openerName" : "DPC Patterns",
+      "variationName" : "J, Variation 1"
     },
     {
-      "code": "v115@8gwhg0Fehlwhi0R4CeglwhRpR4BtAeg0glwhRpCeBt?i0JeAgH",
-      "id": "dpc-patterns-j-variation-2",
-      "name": "DPC Patterns J, Variation 2",
-      "openerName": "DPC Patterns",
-      "variationName": "J, Variation 2",
-      "earlyVariantDetection": true
+      "code" : "v115@8gwhg0Fehlwhi0R4CeglwhRpR4BtAeg0glwhRpCeBt?i0JeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-j-variation-2",
+      "name" : "DPC Patterns J, Variation 2",
+      "openerName" : "DPC Patterns",
+      "variationName" : "J, Variation 2"
     },
     {
-      "code": "v115@4gQ4IeR4BewhilCeQ4RpwhglB8whAeBtRpwhAeB8yh?BtAewhJeAgH",
-      "id": "dpc-patterns-jb-o",
-      "name": "DPC Patterns JB, O",
-      "openerName": "DPC Patterns",
-      "variationName": "JB, O",
-      "earlyVariantDetection": true
+      "code" : "v115@4gQ4IeR4BewhilCeQ4RpwhglRpg0AeBtRpwhAeRpi0?BtAewhJeAgHHhwwIewwAtQaHeAtQaQeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-jb",
+      "name" : "DPC Patterns JB",
+      "openerName" : "DPC Patterns",
+      "variationName" : "JB"
     },
     {
-      "code": "v115@4gQ4IeR4BewhA8hlCeQ4RpwhB8glwhAeBtRpwhAeA8?glyhBtAewhJeAgH",
-      "id": "dpc-patterns-jb-s",
-      "name": "DPC Patterns JB, S",
-      "openerName": "DPC Patterns",
-      "variationName": "JB, S",
-      "earlyVariantDetection": true
+      "code" : "v115@1gAtGewhBtGewhAtCehli0whRpAeR4glRpg0whRpR4?AeglRpKeAgHQhgWGeQpwhgWGeQpwhKeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-kuruma",
+      "name" : "DPC Patterns Kuruma",
+      "openerName" : "DPC Patterns",
+      "variationName" : "Kuruma"
     },
     {
-      "code": "v115@1gAtGewhBtGewhAtCehlzhB8AeR4glRpxhB8R4Aegl?RpKeAgH",
-      "id": "dpc-patterns-kuruma-o",
-      "name": "DPC Patterns Kuruma, O",
-      "openerName": "DPC Patterns",
-      "variationName": "Kuruma, O",
-      "earlyVariantDetection": true
+      "code" : "v115@2gRpEewhBeRpEewhCeR4BthlxhAeR4B8BtglzhB8Ce?glJeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-lime",
+      "name" : "DPC Patterns Lime",
+      "openerName" : "DPC Patterns",
+      "variationName" : "Lime"
     },
     {
-      "code": "v115@6gQ4IeR4whA8hlxhCeQ4whB8glwhBtAeRpwhAeA8gl?whAeBtRpwhJeAgH",
-      "id": "dpc-patterns-kuruma-s",
-      "name": "DPC Patterns Kuruma, S",
-      "openerName": "DPC Patterns",
-      "variationName": "Kuruma, S",
-      "earlyVariantDetection": true
+      "code" : "v115@1gglGeilGeh0CeAtzhg0RpAeBtT4g0RpAeAtT4KeAg?Hzgg0AegWGeCtGexSHewSAeQaGeAPRaQeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-long-s",
+      "name" : "DPC Patterns Long S",
+      "openerName" : "DPC Patterns",
+      "variationName" : "Long S"
     },
     {
-      "code": "v115@2gRpEewhBeRpEewhCeR4BthlxhAeR4B8BtglzhB8Ce?glJeAgH",
-      "id": "dpc-patterns-lime",
-      "name": "DPC Patterns Lime",
-      "openerName": "DPC Patterns",
-      "variationName": "Lime",
-      "earlyVariantDetection": true
+      "code" : "v115@3gglGeR4glDewhAeR4AthlBeg0whRpBtwwCeg0whRp?AtywAeh0whJeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-t",
+      "name" : "DPC Patterns T",
+      "openerName" : "DPC Patterns",
+      "variationName" : "T"
     },
     {
-      "code": "v115@3gglGeR4glDewhAeR4AthlBeg0whRpBtwwCeg0whRp?AtywAeh0whJeAgH",
-      "id": "dpc-patterns-t",
-      "name": "DPC Patterns T",
-      "openerName": "DPC Patterns",
-      "variationName": "T",
-      "earlyVariantDetection": true
+      "code" : "v115@\/gR4AtCeRpAeR4BtBewhRpilAtCeyhglzhAeD8JeAg?H",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-tki-center",
+      "name" : "DPC Patterns TKI, Center",
+      "openerName" : "DPC Patterns",
+      "variationName" : "TKI, Center"
     },
     {
-      "code": "v115@/gR4AtCeRpAeR4BtBewhRpilAtCeyhglzhAeD8JeAg?H",
-      "id": "dpc-patterns-tki-i",
-      "name": "DPC Patterns TKI, I",
-      "openerName": "DPC Patterns",
-      "variationName": "TKI, I",
-      "earlyVariantDetection": true
+      "code" : "v115@9gRpBeR4AtCeRpAeR4BtBewhB8ilAtCewhB8glzhAe?xhJeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-tki-o",
+      "name" : "DPC Patterns TKI, O",
+      "openerName" : "DPC Patterns",
+      "variationName" : "TKI, O"
     },
     {
-      "code": "v115@9gRpBeR4AtCeRpAeR4BtBewhB8ilAtCewhB8glzhAe?xhJeAgH",
-      "id": "dpc-patterns-tki-o",
-      "name": "DPC Patterns TKI, O",
-      "openerName": "DPC Patterns",
-      "variationName": "TKI, O",
-      "earlyVariantDetection": true
+      "code" : "v115@0gAtHeBtGewhAtCehlRpg0whRpAeR4glRpg0whRpR4?AeglAeh0whJeAgHNhRpHexhIehWKeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "dpc-patterns-tsd",
+      "name" : "DPC Patterns TSD",
+      "openerName" : "DPC Patterns",
+      "variationName" : "TSD"
     },
     {
-      "code": "v115@0gAtHeBtGewhAtCehlRpxhB8AeR4glRpxhB8R4Aegl?AeyhJeAgH",
-      "id": "dpc-patterns-tsd-o",
-      "name": "DPC Patterns TSD, O",
-      "openerName": "DPC Patterns",
-      "variationName": "TSD, O",
-      "earlyVariantDetection": true
+      "code" : "v115@3gwwHeywwhGeR4whBtAeRpAeR4glwhg0BtRpAeilwh?i0JeAgHLhwSQaAegWQpDexSAtAeAPRpCeglBtAeBPwhJeAA?A3gQLHeyhQaBewhFeg0AeQLwhEeQag0wwQLgHDeRaAtwwAe?gHJeAAA",
+      "id" : "dt-cannon-base",
+      "name" : "DT Cannon Base",
+      "openerName" : "DT Cannon",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@7gQ4AewhGeR4whilxhCeQ4whglB8whBtAeRpwhB8Ae?whAeBtRpJeAgH",
-      "id": "dpc-patterns-tsd-s",
-      "name": "DPC Patterns TSD, S",
-      "openerName": "DPC Patterns",
-      "variationName": "TSD, S",
-      "earlyVariantDetection": true
+      "code" : "v115@agQ4FehlAeR4FeglBtQ4Bewhh0AeglA8BtRpwhg0Be?D8Rpwhg0CeE8whB8AeI8AeG8JeAgH",
+      "id" : "dt-cannon-form-a",
+      "name" : "DT Cannon Form A",
+      "openerName" : "DT Cannon",
+      "variationName" : "Form A"
     },
     {
-      "code": "v115@3gwwHeywwhGeR4whBtAeRpAeR4glwhg0BtRpAeilwh?i0JeAgHLhwSQaAegWQpDexSAtAeAPRpCeglBtAeBPwhJeAA?A3gQLHeyhQaBewhFeg0AeQLwhEeQag0wwQLgHDeRaAtwwAe?gHJeAAA",
-      "id": "dt-cannon-base",
-      "name": "DT Cannon Base",
-      "openerName": "DT Cannon",
-      "variationName": "Base"
+      "code" : "v115@hghlDeR4CeglBtAeR4whh0AeglA8BtRpwhg0BeD8Rp?whg0CeE8whB8AeI8AeG8JeAgH",
+      "id" : "dt-cannon-form-b",
+      "name" : "DT Cannon Form B",
+      "openerName" : "DT Cannon",
+      "variationName" : "Form B"
     },
     {
-      "code": "v115@agQ4FehlAeR4FeglBtQ4Bewhh0AeglA8BtRpwhg0Be?D8Rpwhg0CeE8whB8AeI8AeG8JeAgH",
-      "id": "dt-cannon-form-a",
-      "name": "DT Cannon Form A",
-      "openerName": "DT Cannon",
-      "variationName": "Form A"
+      "code" : "v115@hghlQ4BeAtEeglR4BtAewhh0AeglA8Q4AtRpwhg0Be?D8Rpwhg0CeE8whB8AeI8AeG8JeAgH",
+      "id" : "dt-cannon-form-c",
+      "name" : "DT Cannon Form C",
+      "openerName" : "DT Cannon",
+      "variationName" : "Form C"
     },
     {
-      "code": "v115@hghlDeR4CeglBtAeR4whh0AeglA8BtRpwhg0BeD8Rp?whg0CeE8whB8AeI8AeG8JeAgH",
-      "id": "dt-cannon-form-b",
-      "name": "DT Cannon Form B",
-      "openerName": "DT Cannon",
-      "variationName": "Form B"
+      "code" : "v115@0gg0Ieg0whFeAth0whwwDeBtRpwhxwR4AeAtglRpwh?wwR4AeilJeAgH",
+      "id" : "gamushiro-stacking-base",
+      "name" : "Gamushiro Stacking Base",
+      "openerName" : "Gamushiro Stacking",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@hghlQ4BeAtEeglR4BtAewhh0AeglA8Q4AtRpwhg0Be?D8Rpwhg0CeE8whB8AeI8AeG8JeAgH",
-      "id": "dt-cannon-form-c",
-      "name": "DT Cannon Form C",
-      "openerName": "DT Cannon",
-      "variationName": "Form C"
+      "code" : "v115@cgRpwhGeRpwhh0Eehlwhg0A8BtDeglwhg0B8BtR4Ae?glE8R4BeI8AeH8AeC8JeAgH",
+      "id" : "gamushiro-stacking-alternate-pattern-1",
+      "name" : "Gamushiro Stacking Alternate Pattern 1",
+      "openerName" : "Gamushiro Stacking",
+      "variationName" : "Alternate Pattern 1"
     },
     {
-      "code": "v115@0gg0Ieg0whFeAth0whwwDeBtRpwhxwR4AeAtglRpwh?wwR4AeilJeAgH",
-      "id": "gamushiro-stacking-base",
-      "name": "Gamushiro Stacking Base",
-      "openerName": "Gamushiro Stacking",
-      "variationName": "Base"
+      "code" : "v115@egwhBeAtg0EewhAeBth0BehlwhAeAti0CeglwhRpA8?h0R4AeglA8RpB8R4BeI8AeH8AeC8JeAgH",
+      "id" : "gamushiro-stacking-alternate-pattern-2",
+      "name" : "Gamushiro Stacking Alternate Pattern 2",
+      "openerName" : "Gamushiro Stacking",
+      "variationName" : "Alternate Pattern 2"
     },
     {
-      "code": "v115@cgRpwhGeRpwhh0Eehlwhg0A8BtDeglwhg0B8BtR4Ae?glE8R4BeI8AeH8AeC8JeAgH",
-      "id": "gamushiro-stacking-alternate-pattern-1",
-      "name": "Gamushiro Stacking Alternate Pattern 1",
-      "openerName": "Gamushiro Stacking",
-      "variationName": "Alternate Pattern 1"
+      "code" : "v115@cgglRpGeglRpwhCeg0BehlAtwhh0Aeg0CeBtwhg0A8?h0R4AeAtA8whg0B8R4BeI8AeH8AeC8JeAgH",
+      "id" : "gamushiro-stacking-alternate-pattern-3",
+      "name" : "Gamushiro Stacking Alternate Pattern 3",
+      "openerName" : "Gamushiro Stacking",
+      "variationName" : "Alternate Pattern 3"
     },
     {
-      "code": "v115@egwhBeAtg0EewhAeBth0BehlwhAeAti0CeglwhRpA8?h0R4AeglA8RpB8R4BeI8AeH8AeC8JeAgH",
-      "id": "gamushiro-stacking-alternate-pattern-2",
-      "name": "Gamushiro Stacking Alternate Pattern 2",
-      "openerName": "Gamushiro Stacking",
-      "variationName": "Alternate Pattern 2"
+      "code" : "v115@egwhAeAtg0FewhBtg0Aeg0BehlwhAth0Aeg0Ceglwh?RpA8h0R4AeglA8RpB8R4BeI8AeH8AeC8JeAgH",
+      "id" : "gamushiro-stacking-alternate-pattern-4",
+      "name" : "Gamushiro Stacking Alternate Pattern 4",
+      "openerName" : "Gamushiro Stacking",
+      "variationName" : "Alternate Pattern 4"
     },
     {
-      "code": "v115@cgglRpGeglRpwhCeg0BehlAtwhh0Aeg0CeBtwhg0A8?h0R4AeAtA8whg0B8R4BeI8AeH8AeC8JeAgH",
-      "id": "gamushiro-stacking-alternate-pattern-3",
-      "name": "Gamushiro Stacking Alternate Pattern 3",
-      "openerName": "Gamushiro Stacking",
-      "variationName": "Alternate Pattern 3"
+      "code" : "v115@VgRpGewhRpGewhh0Eehlwhg0A8BtDeglwhg0B8BtR4?AeglE8R4BeI8AeH8AeC8JeAgH",
+      "id" : "gamushiro-stacking-standard",
+      "name" : "Gamushiro Stacking Standard",
+      "openerName" : "Gamushiro Stacking",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@egwhAeAtg0FewhBtg0Aeg0BehlwhAth0Aeg0Ceglwh?RpA8h0R4AeglA8RpB8R4BeI8AeH8AeC8JeAgH",
-      "id": "gamushiro-stacking-alternate-pattern-4",
-      "name": "Gamushiro Stacking Alternate Pattern 4",
-      "openerName": "Gamushiro Stacking",
-      "variationName": "Alternate Pattern 4"
+      "code" : "v115@9gwhh0Feglwhg0CeAtQ4ilwhg0wwAeBtR4RpwhywAt?BeQ4RpJeAgWHAPNUFDK+1BA9gAtRaGewwQaHewwAewhHeCP?PeAAPAA",
+      "id" : "gassho-tsd-base",
+      "name" : "Gassho TSD Base",
+      "openerName" : "Gassho TSD",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@VgRpGewhRpGewhh0Eehlwhg0A8BtDeglwhg0B8BtR4?AeglE8R4BeI8AeH8AeC8JeAgH",
-      "id": "gamushiro-stacking-standard",
-      "name": "Gamushiro Stacking Standard",
-      "openerName": "Gamushiro Stacking",
-      "variationName": "Standard"
+      "code" : "v115@5gAtCewhDeBtCewhAei0AtDewhilg0RpAeR4whglCe?RpR4KeAgH",
+      "id" : "hachispin-base",
+      "name" : "Hachispin Base",
+      "openerName" : "Hachispin",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@9gwhh0Feglwhg0CeAtQ4ilwhg0wwAeBtR4RpwhywAt?BeQ4RpJeAgWHAPNUFDK+1BA9gAtRaGewwQaHewwAewhHeCP?PeAAPAA",
-      "id": "gassho-tsd-base",
-      "name": "Gassho TSD Base",
-      "openerName": "Gassho TSD",
-      "variationName": "Base"
+      "code" : "v115@pgh0Geglg0DeR4ilg0AeBtR4A8RpwhA8BeBtB8Rpwh?A8AeG8whB8CeD8whJeAgH",
+      "id" : "hachispin-compromise",
+      "name" : "Hachispin Compromise",
+      "openerName" : "Hachispin",
+      "variationName" : "Compromise"
     },
     {
-      "code": "v115@5gAtCewhDeBtCewhAei0AtDewhilg0RpAeR4whglCe?RpR4KeAgH",
-      "id": "hachispin-base",
-      "name": "Hachispin Base",
-      "openerName": "Hachispin",
-      "variationName": "Base"
+      "code" : "v115@pgh0EewhBeg0DeR4whRpg0AeBtR4A8whRpA8BeBtB8?whhlA8AeG8glB8CeD8glJeAgH",
+      "id" : "hachispin-standard",
+      "name" : "Hachispin Standard",
+      "openerName" : "Hachispin",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@pgh0Geglg0DeR4ilg0AeBtR4A8RpwhA8BeBtB8Rpwh?A8AeG8whB8CeD8whJeAgH",
-      "id": "hachispin-compromise",
-      "name": "Hachispin Compromise",
-      "openerName": "Hachispin",
-      "variationName": "Compromise"
+      "code" : "v115@zgglIeglFeBtAehlwwDeg0BtRpxwR4Aei0RpwwR4Ae?zhJeAgWNAF0VeE5oo2AiHEXEEBAAAzggWIegWilFegWmeAA?PAAxghlIeglAeiWEeglAegWleAAAxghWIegWIegWneAAA",
+      "id" : "honey-cup-base",
+      "name" : "Honey Cup Base",
+      "openerName" : "Honey Cup",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@pgh0EewhBeg0DeR4whRpg0AeBtR4A8whRpA8BeBtB8?whhlA8AeG8glB8CeD8glJeAgH",
-      "id": "hachispin-standard",
-      "name": "Hachispin Standard",
-      "openerName": "Hachispin",
-      "variationName": "Standard"
+      "code" : "v115@lgzhBeh0BeBtilRpg0CeBthlRpg0R4AeB8ilA8R4Be?I8AeH8AeD8JeAgHrgxSFeAtQpAewSFeAtRaAPFeAtmeAAAr?gRaHeQpQaFewSwhAtGewSwhleAAArgxhFeAPAewSwhFeQaQ?pAeAtFeRaleAAAlgyhCewhQpBegWQawhQaAegWwhQpCeSaA?egWGeQaneAAArggWAPFeAtglAeAPFeAtAegWAPFeAtglleA?AA",
+      "id" : "honey-cup-standard",
+      "name" : "Honey Cup Standard",
+      "openerName" : "Honey Cup",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@EhBtCewwDeg0BtRpxwR4Aei0RpwwR4AezhJeAgWNAF?0VeE5oo2AiHEXEEBAAA",
-      "id": "honey-cup-base",
-      "name": "Honey Cup Base",
-      "openerName": "Honey Cup",
-      "variationName": "Base"
+      "code" : "v115@VgRpHeRpGewhhlAeg0BeBtAewhhlAeg0CeBtwhhlh0?R4AeB8whhlA8R4BeI8AeH8AeD8JeAgH",
+      "id" : "honey-cup-tst",
+      "name" : "Honey Cup TST",
+      "openerName" : "Honey Cup",
+      "variationName" : "TST"
     },
     {
-      "code": "v115@lgzhBeh0BeBtilRpg0CeBthlRpg0R4AeB8ilA8R4Be?I8AeH8AeD8JeAgHrgxSFeAtQpAewSFeAtRaAPFeAtmeAAAr?gRaHeQpQaFewSwhAtGewSwhleAAArgxhFeAPAewSwhFeQaQ?pAeAtFeRaleAAAlgyhCewhQpBegWQawhQaAegWwhQpCeSaA?egWGeQaneAAArggWAPFeAtglAeAPFeAtAegWAPFeAtglleA?AA",
-      "id": "honey-cup-standard",
-      "name": "Honey Cup Standard",
-      "openerName": "Honey Cup",
-      "variationName": "Standard"
+      "code" : "v115@xgAtAeglFeBtAeglFeAtwhAehlwwDeg0whAeRpxwR4?Aeg0whAeRpwwR4Aeh0whKeAgHbgglIeglIehlBegWIegWIe?hWleAAAbggWIegWIehW9eAAA",
+      "id" : "kisaragi-stacking-base",
+      "name" : "Kisaragi Stacking Base",
+      "openerName" : "Kisaragi Stacking",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@VgRpHeRpGewhhlAeg0BeBtAewhhlAeg0CeBtwhhlh0?R4AeB8whhlA8R4BeI8AeH8AeD8JeAgH",
-      "id": "honey-cup-tst",
-      "name": "Honey Cup TST",
-      "openerName": "Honey Cup",
-      "variationName": "TST"
+      "code" : "v115@lgRphlBeAtg0BeRpA8hlBtg0CeB8hlAth0R4AeB8wh?hlA8R4BeB8whF8AeB8whE8AeC8whJeAgHrggWAPFeAtglAe?APFeAtAegWAPFeAtglleAAA",
+      "id" : "kisaragi-stacking-honey-cup",
+      "name" : "Kisaragi Stacking Honey Cup",
+      "openerName" : "Kisaragi Stacking",
+      "variationName" : "Honey Cup"
     },
     {
-      "code": "v115@xgAtHeBtHeAtwhCewwDeg0whAeRpxwR4Aeg0whAeRp?wwR4Aeh0whKeAgH",
-      "id": "kisaragi-stacking-base",
-      "name": "Kisaragi Stacking Base",
-      "openerName": "Kisaragi Stacking",
-      "variationName": "Base"
+      "code" : "v115@bgglRpGeglRpCeAtg0BehlA8AeglBtg0CeB8AeglAt?h0R4AeB8whhlA8R4BeB8whF8AeB8whE8AeC8whJeAgHrggW?APFeAtglAeAPFeAtAegWAPFeAtglleAAA",
+      "id" : "kisaragi-stacking-standard",
+      "name" : "Kisaragi Stacking Standard",
+      "openerName" : "Kisaragi Stacking",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@lgRphlBeAtg0BeRpA8hlBtg0CeB8hlAth0R4AeB8wh?hlA8R4BeB8whF8AeB8whE8AeC8whJeAgHrggWAPFeAtglAe?APFeAtAegWAPFeAtglleAAA",
-      "id": "kisaragi-stacking-honey-cup",
-      "name": "Kisaragi Stacking Honey Cup",
-      "openerName": "Kisaragi Stacking",
-      "variationName": "Honey Cup"
+      "code" : "v115@bgh0AtGeg0BtCehlBeg0AtA8AeglRpglCeB8AeglRp?glR4AeB8whhlA8R4BeB8whF8AeB8whE8AeC8whJeAgH",
+      "id" : "kisaragi-stacking-standard-early-z-o",
+      "name" : "Kisaragi Stacking Standard, Early Z+O",
+      "openerName" : "Kisaragi Stacking",
+      "variationName" : "Standard, Early Z+O"
     },
     {
-      "code": "v115@bgglRpGeglRpCeAtg0BehlA8AeglBtg0CeB8AeglAt?h0R4AeB8whhlA8R4BeB8whF8AeB8whE8AeC8whJeAgHrggW?APFeAtglAeAPFeAtAegWAPFeAtglleAAA",
-      "id": "kisaragi-stacking-standard",
-      "name": "Kisaragi Stacking Standard",
-      "openerName": "Kisaragi Stacking",
-      "variationName": "Standard"
+      "code" : "v115@+gRpEeAtwhAeRpg0wwBeBtwhAeR4g0xwAeAtglwhR4?h0wwAeilwhJeAgH",
+      "id" : "kuromitsu-stacking-base",
+      "name" : "Kuromitsu Stacking Base",
+      "openerName" : "Kuromitsu Stacking",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@bgh0AtGeg0BtCehlBeg0AtA8AeglRpglCeB8AeglRp?glR4AeB8whhlA8R4BeB8whF8AeB8whE8AeC8whJeAgH",
-      "id": "kisaragi-stacking-standard-early-z-o",
-      "name": "Kisaragi Stacking Standard, Early Z+O",
-      "openerName": "Kisaragi Stacking",
-      "variationName": "Standard, Early Z+O"
+      "code" : "v115@lgRphlBeR4BeRpAtglwhR4g0CeBtglwhB8i0AeAtB8?whD8BeC8whE8AeH8AeD8JeAgH",
+      "id" : "kuromitsu-stacking-honey-cup",
+      "name" : "Kuromitsu Stacking Honey Cup",
+      "openerName" : "Kuromitsu Stacking",
+      "variationName" : "Honey Cup"
     },
     {
-      "code": "v115@+gRpEeAtwhAeRpg0wwBeBtwhAeR4g0xwAeAtglwhR4?h0wwAeilwhJeAgH",
-      "id": "kuromitsu-stacking-base",
-      "name": "Kuromitsu Stacking Base",
-      "openerName": "Kuromitsu Stacking",
-      "variationName": "Base"
+      "code" : "v115@XgAtHeBtHeAtR4BehlRpwhR4g0CeglRpwhB8i0Aegl?B8whD8BeC8whE8AeH8AeD8JeAgH",
+      "id" : "kuromitsu-stacking-standard",
+      "name" : "Kuromitsu Stacking Standard",
+      "openerName" : "Kuromitsu Stacking",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@lgRphlBeR4BeRpAtglwhR4g0CeBtglwhB8i0AeAtB8?whD8BeC8whE8AeH8AeD8JeAgH",
-      "id": "kuromitsu-stacking-honey-cup",
-      "name": "Kuromitsu Stacking Honey Cup",
-      "openerName": "Kuromitsu Stacking",
-      "variationName": "Honey Cup"
+      "code" : "v115@9gQ4EeAtBewhR4CeBtBewhg0Q4CeAtglRpwhi0Aeil?RpwhJeAgH",
+      "id" : "mko-base",
+      "name" : "MKO Base",
+      "openerName" : "MKO",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@XgAtHeBtHeAtR4BehlRpwhR4g0CeglRpwhB8i0Aegl?B8whD8BeC8whE8AeH8AeD8JeAgH",
-      "id": "kuromitsu-stacking-standard",
-      "name": "Kuromitsu Stacking Standard",
-      "openerName": "Kuromitsu Stacking",
-      "variationName": "Standard"
+      "code" : "v115@9gQ4EeAtwhBeR4CeBtwhBeg0Q4CeAtglwhRpi0Aeil?whRpJeAgH",
+      "id" : "mko-alternate-base",
+      "name" : "MKO Alternate Base",
+      "openerName" : "MKO",
+      "variationName" : "Alternate Base"
     },
     {
-      "code": "v115@9gQ4EeAtBewhR4CeBtBewhg0Q4CeAtglRpwhi0Aeil?RpwhJeAgH",
-      "id": "mko-base",
-      "name": "MKO Base",
-      "openerName": "MKO",
-      "variationName": "Base"
+      "code" : "v115@FhAtwhBewwDeBtwhRpxwR4AeAtglwhRpwwR4Aeilwh?JeAgWNAF0VeE5oo2AiHEXEEBAAA",
+      "id" : "mountainous-stacking-2-base",
+      "name" : "Mountainous Stacking 2 Base",
+      "openerName" : "Mountainous Stacking 2",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@9gQ4EeAtwhBeR4CeBtwhBeg0Q4CeAtglwhRpi0Aeil?whRpJeAgH",
-      "id": "mko-alternate-base",
-      "name": "MKO Alternate Base",
-      "openerName": "MKO",
-      "variationName": "Alternate Base"
+      "code" : "v115@cgBtIeBtwhBeg0BehlRpwhi0CeglRpwhi0R4AeglB8?whg0A8R4BeI8AeH8AeD8JeAgH",
+      "id" : "mountainous-stacking-2-compromise",
+      "name" : "Mountainous Stacking 2 Compromise",
+      "openerName" : "Mountainous Stacking 2",
+      "variationName" : "Compromise"
     },
     {
-      "code": "v115@FhAtwhBewwDeBtwhRpxwR4AeAtglwhRpwwR4Aeilwh?JeAgWNAF0VeE5oo2AiHEXEEBAAA",
-      "id": "mountainous-stacking-2-base",
-      "name": "Mountainous Stacking 2 Base",
-      "openerName": "Mountainous Stacking 2",
-      "variationName": "Base"
+      "code" : "v115@VgwhGeh0whGeh0whEehlh0whBtDeglh0RpBtR4Aegl?B8RpA8R4BeI8AeH8AeD8JeAgH",
+      "id" : "mountainous-stacking-2-setup-a",
+      "name" : "Mountainous Stacking 2 Setup A",
+      "openerName" : "Mountainous Stacking 2",
+      "variationName" : "Setup A"
     },
     {
-      "code": "v115@cgBtIeBtwhBeg0BehlRpwhi0CeglRpwhi0R4AeglB8?whg0A8R4BeI8AeH8AeD8JeAgH",
-      "id": "mountainous-stacking-2-compromise",
-      "name": "Mountainous Stacking 2 Compromise",
-      "openerName": "Mountainous Stacking 2",
-      "variationName": "Compromise"
+      "code" : "v115@bgzhFej0Fehlh0AeBtDeglh0RpBtR4AeglB8RpA8R4?BeI8AeH8AeD8JeAgH",
+      "id" : "mountainous-stacking-2-setup-b",
+      "name" : "Mountainous Stacking 2 Setup B",
+      "openerName" : "Mountainous Stacking 2",
+      "variationName" : "Setup B"
     },
     {
-      "code": "v115@VgwhGeh0whGeh0whEehlh0whBtDeglh0RpBtR4Aegl?B8RpA8R4BeI8AeH8AeD8JeAgH",
-      "id": "mountainous-stacking-2-setup-a",
-      "name": "Mountainous Stacking 2 Setup A",
-      "openerName": "Mountainous Stacking 2",
-      "variationName": "Setup A"
+      "code" : "v115@lgRphlwhBeg0BeRpAtglwhi0CeBtglwhi0R4AeAtB8?whg0A8R4BeI8AeH8AeD8JeAgH",
+      "id" : "mountainous-stacking-2-setup-c",
+      "name" : "Mountainous Stacking 2 Setup C",
+      "openerName" : "Mountainous Stacking 2",
+      "variationName" : "Setup C"
     },
     {
-      "code": "v115@bgzhFej0Fehlh0AeBtDeglh0RpBtR4AeglB8RpA8R4?BeI8AeH8AeD8JeAgH",
-      "id": "mountainous-stacking-2-setup-b",
-      "name": "Mountainous Stacking 2 Setup B",
-      "openerName": "Mountainous Stacking 2",
-      "variationName": "Setup B"
+      "code" : "v115@fgBtHewhBtg0BehlRpwhi0CeglRpwhi0R4AeglB8wh?g0A8R4BeI8AeH8AeD8JeAgH",
+      "id" : "mountainous-stacking-2-setup-d",
+      "name" : "Mountainous Stacking 2 Setup D",
+      "openerName" : "Mountainous Stacking 2",
+      "variationName" : "Setup D"
     },
     {
-      "code": "v115@lgRphlwhBeg0BeRpAtglwhi0CeBtglwhi0R4AeAtB8?whg0A8R4BeI8AeH8AeD8JeAgH",
-      "id": "mountainous-stacking-2-setup-c",
-      "name": "Mountainous Stacking 2 Setup C",
-      "openerName": "Mountainous Stacking 2",
-      "variationName": "Setup C"
+      "code" : "v115@ChhlBewhQ4BtCeglRpwhR4BtAeg0glRpwhAeQ4Cei0?AewhJeAgH",
+      "id" : "pelican-base",
+      "name" : "Pelican Base",
+      "openerName" : "Pelican",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@fgBtHewhBtg0BehlRpwhi0CeglRpwhi0R4AeglB8wh?g0A8R4BeI8AeH8AeD8JeAgH",
-      "id": "mountainous-stacking-2-setup-d",
-      "name": "Mountainous Stacking 2 Setup D",
-      "openerName": "Mountainous Stacking 2",
-      "variationName": "Setup D"
+      "code" : "v115@ygwhHeAtwhAeR4BeRpBtwhR4Beg0RpAtwwwhilAeg0?B8xwA8glA8Aeh0C8wwA8JeAgH",
+      "id" : "pelican-riviclia-variation",
+      "name" : "Pelican Riviclia Variation",
+      "openerName" : "Pelican",
+      "variationName" : "Riviclia Variation"
     },
     {
-      "code": "v115@ChhlBewhQ4BtCeglRpwhR4BtAeg0glRpwhAeQ4Cei0?AewhJeAgH",
-      "id": "pelican-base",
-      "name": "Pelican Base",
-      "openerName": "Pelican",
-      "variationName": "Base"
+      "code" : "v115@1gBtDeglDeBtCeglAeh0AezhQ4hlg0BeRpB8R4A8g0?A8AeRpC8Q4A8JeAgH",
+      "id" : "pelican-standard",
+      "name" : "Pelican Standard",
+      "openerName" : "Pelican",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@ygwhHeAtwhAeR4BeRpBtwhR4Beg0RpAtwwwhilAeg0?B8xwA8glA8Aeh0C8wwA8JeAgH",
-      "id": "pelican-riviclia-variation",
-      "name": "Pelican Riviclia Variation",
-      "openerName": "Pelican",
-      "variationName": "Riviclia Variation"
+      "code" : "v115@9gwhi0BtDewhRpg0wwBtCewhRpglxwR4BewhilwwR4?MeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-base",
+      "name" : "Perfect Clear Openers Base",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@1gBtDeglDeBtCeglAeh0AezhQ4hlg0BeRpB8R4A8g0?A8AeRpC8Q4A8JeAgH",
-      "id": "pelican-standard",
-      "name": "Pelican Standard",
-      "openerName": "Pelican",
-      "variationName": "Standard"
+      "code" : "v115@9gi0BtEeRpg0wwBtDeRpglxwR4CeilwwR4NeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-base-no-i",
+      "name" : "Perfect Clear Openers Base, no I",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Base, no I"
     },
     {
-      "code": "v115@9gwhi0BtDewhRpg0wwBtCewhRpglxwR4BewhilwwR4?MeAgH",
-      "id": "perfect-clear-openers-base",
-      "name": "Perfect Clear Openers Base",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Base"
+      "code" : "v115@9gBtDewhilwwBtCewhglRpxwR4Bewhg0RpwwR4Cewh?i0JeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-base-split",
+      "name" : "Perfect Clear Openers Base, split",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Base, split"
     },
     {
-      "code": "v115@9gi0BtEeRpg0wwBtDeRpglxwR4CeilwwR4NeAgH",
-      "id": "perfect-clear-openers-base-no-i",
-      "name": "Perfect Clear Openers Base, no I",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Base, no I"
+      "code" : "v115@9gBtEeilwwBtDeglRpxwR4Ceg0RpwwR4Dei0JeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-base-split-no-i",
+      "name" : "Perfect Clear Openers Base, split, no I",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Base, split, no I"
     },
     {
-      "code": "v115@9gBtDewhilwwBtCewhglRpxwR4Bewhg0RpwwR4Cewh?i0JeAgH",
-      "id": "perfect-clear-openers-base-split",
-      "name": "Perfect Clear Openers Base, split",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Base, split"
+      "code" : "v115@Bhili0DeglAtRpQ4g0DeBtRpR4DeAtzhQ4JeAgHBhw?wRaRLgWDewwQpBewSgWDeglQpBewSQLDeglxwxhQLJeAAA",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-grace-system-standard",
+      "name" : "Perfect Clear Openers Grace System, Standard",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Grace System, Standard"
     },
     {
-      "code": "v115@9gBtEeilwwBtDeglRpxwR4Ceg0RpwwR4Dei0JeAgH",
-      "id": "perfect-clear-openers-base-split-no-i",
-      "name": "Perfect Clear Openers Base, split, no I",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Base, split, no I"
+      "code" : "v115@9gwhilFewhglAtGewhBtR4EewhAtR4PeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-ilsz-standard",
+      "name" : "Perfect Clear Openers ILSZ, Standard",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "ILSZ, Standard"
     },
     {
-      "code": "v115@Bhili0DeglAtRpQ4g0DeBtRpR4DeAtzhQ4JeAgHBhw?wRaRLgWDewwQpBewSgWDeglQpBewSQLDeglxwxhQLJeAAA",
-      "id": "perfect-clear-openers-grace-system-standard",
-      "name": "Perfect Clear Openers Grace System, Standard",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Grace System, Standard"
+      "code" : "v115@9gwhilFewhglAtGewhBtR4RpCewhAtR4AeRpMeAgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-jigsaw-no-j",
+      "name" : "Perfect Clear Openers Jigsaw, no J",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Jigsaw, no J"
     },
     {
-      "code": "v115@9gwhilFewhglAtGewhBtR4EewhAtR4PeAgH",
-      "id": "perfect-clear-openers-ilsz-standard",
-      "name": "Perfect Clear Openers ILSZ, Standard",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "ILSZ, Standard"
+      "code" : "v115@9gwhilFewhglAtGewhBtR4Rpi0whAtR4AeRpBeg0Je?AgH",
+      "earlyVariantDetection" : true,
+      "id" : "perfect-clear-openers-jigsaw-standard",
+      "name" : "Perfect Clear Openers Jigsaw, Standard",
+      "openerName" : "Perfect Clear Openers",
+      "variationName" : "Jigsaw, Standard"
     },
     {
-      "code": "v115@9gwhilFewhglAtGewhBtR4RpCewhAtR4AeRpMeAgH",
-      "id": "perfect-clear-openers-jigsaw-no-j",
-      "name": "Perfect Clear Openers Jigsaw, no J",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Jigsaw, no J"
+      "code" : "v115@ygAtHeBtHeAtwhCewwDeg0whAeRpxwR4Aeg0whAeRp?wwR4Aeh0whJeAgH",
+      "id" : "satsuki-stacking-base",
+      "name" : "Satsuki Stacking Base",
+      "openerName" : "Satsuki Stacking",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@9gwhilFewhglAtGewhBtR4Rpi0whAtR4AeRpBeg0Je?AgH",
-      "id": "perfect-clear-openers-jigsaw-standard",
-      "name": "Perfect Clear Openers Jigsaw, Standard",
-      "openerName": "Perfect Clear Openers",
-      "variationName": "Jigsaw, Standard"
+      "code" : "v115@cgglRpGeglRpCehlBehlA8Aeh0AtglCeB8whg0Btgl?R4AeB8whg0AtA8R4BeB8whF8AeB8whE8AeC8JeAgHsgglAt?FeAPgWAeAtFeAPAeglAtFeAPgWkeAAA",
+      "id" : "satsuki-stacking-standard",
+      "name" : "Satsuki Stacking Standard",
+      "openerName" : "Satsuki Stacking",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@ygAtHeBtHeAtwhCewwDeg0whAeRpxwR4Aeg0whAeRp?wwR4Aeh0whJeAgH",
-      "id": "satsuki-stacking-base",
-      "name": "Satsuki Stacking Base",
-      "openerName": "Satsuki Stacking",
-      "variationName": "Base"
+      "code" : "v115@cgh0AtGeg0BtCehlBeg0AtA8AeglRpglCeB8whglRp?glR4AeB8whhlA8R4BeB8whF8AeB8whE8AeC8JeAgH",
+      "id" : "satsuki-stacking-standard-early-z-o",
+      "name" : "Satsuki Stacking Standard, Early Z+O",
+      "openerName" : "Satsuki Stacking",
+      "variationName" : "Standard, Early Z+O"
     },
     {
-      "code": "v115@cgglRpGeglRpCehlBehlA8Aeh0AtglCeB8whg0Btgl?R4AeB8whg0AtA8R4BeB8whF8AeB8whE8AeC8JeAgHsgglAt?FeAPgWAeAtFeAPAeglAtFeAPgWkeAAA",
-      "id": "satsuki-stacking-standard",
-      "name": "Satsuki Stacking Standard",
-      "openerName": "Satsuki Stacking",
-      "variationName": "Standard"
+      "code" : "v115@9gwhFeBtAewhglQ4AewwBeg0BtwhglR4xwAeg0Rpwh?hlQ4wwAeh0RpJeAgHzgBtIeBtDeBPIeBPdeAAAzgBPIeBPu?eAAA",
+      "id" : "stray-cannon-base",
+      "name" : "Stray Cannon Base",
+      "openerName" : "Stray Cannon",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@cgh0AtGeg0BtCehlBeg0AtA8AeglRpglCeB8whglRp?glR4AeB8whhlA8R4BeB8whF8AeB8whE8AeC8JeAgH",
-      "id": "satsuki-stacking-standard-early-z-o",
-      "name": "Satsuki Stacking Standard, Early Z+O",
-      "openerName": "Satsuki Stacking",
-      "variationName": "Standard, Early Z+O"
+      "code" : "v115@dgh0BeQ4Eeg0whBeR4BeBtg0whAeRpQ4CeBtwhA8Rp?ilAeBtwhC8glA8BeA8BtF8AeH8AeD8JeAgH",
+      "id" : "stray-cannon-alternative",
+      "name" : "Stray Cannon Alternative",
+      "openerName" : "Stray Cannon",
+      "variationName" : "Alternative"
     },
     {
-      "code": "v115@9gwhIewhglQ4AewwBeg0BewhglR4xwAeg0RpwhhlQ4?wwAeh0RpJeAgH",
-      "id": "stray-cannon-base",
-      "name": "Stray Cannon Base",
-      "openerName": "Stray Cannon",
-      "variationName": "Base"
+      "code" : "v115@XgAtHeBtHeAtRpBei0whBtRpCeQ4g0whA8BtilAeR4?whC8glA8BeA8Q4whF8AeH8AeD8JeAgH",
+      "id" : "stray-cannon-kuromitsu-stacking",
+      "name" : "Stray Cannon Kuromitsu Stacking",
+      "openerName" : "Stray Cannon",
+      "variationName" : "Kuromitsu Stacking"
     },
     {
-      "code": "v115@dgh0BeQ4Eeg0whBeR4BeBtg0whAeRpQ4CeBtwhA8Rp?ilAeBtwhC8glA8BeA8BtF8AeH8AeD8JeAgH",
-      "id": "stray-cannon-alternative",
-      "name": "Stray Cannon Alternative",
-      "openerName": "Stray Cannon",
-      "variationName": "Alternative"
+      "code" : "v115@lgRpg0whQ4BeAtBeRpg0whR4BtCeh0whA8Q4AtilAe?BtwhC8glA8BeA8BtF8AeH8AeD8JeAgH",
+      "id" : "stray-cannon-standard",
+      "name" : "Stray Cannon Standard",
+      "openerName" : "Stray Cannon",
+      "variationName" : "Standard"
     },
     {
-      "code": "v115@XgAtHeBtHeAtRpBei0whBtRpCeQ4g0whA8BtilAeR4?whC8glA8BeA8Q4whF8AeH8AeD8JeAgH",
-      "id": "stray-cannon-kuromitsu-stacking",
-      "name": "Stray Cannon Kuromitsu Stacking",
-      "openerName": "Stray Cannon",
-      "variationName": "Kuromitsu Stacking"
+      "code" : "v115@Wgh0Heg0Q4FewhAeg0R4BeBtAewhAeRpQ4CeBtwhA8?RpilAeBtwhC8glA8BeA8BtF8AeH8AeD8JeAgH",
+      "id" : "stray-cannon-tst",
+      "name" : "Stray Cannon TST",
+      "openerName" : "Stray Cannon",
+      "variationName" : "TST"
     },
     {
-      "code": "v115@lgRpg0whQ4BeAtBeRpg0whR4BtCeh0whA8Q4AtilAe?BtwhC8glA8BeA8BtF8AeH8AeD8JeAgH",
-      "id": "stray-cannon-standard",
-      "name": "Stray Cannon Standard",
-      "openerName": "Stray Cannon",
-      "variationName": "Standard"
+      "code" : "v115@KhAtAeR4Beg0RpBtR4Ceg0RpAtzhAeh0JeAgH",
+      "id" : "tki-3-base",
+      "name" : "TKI 3 Base",
+      "openerName" : "TKI 3",
+      "variationName" : "Base"
     },
     {
-      "code": "v115@Wgh0Heg0Q4FewhAeg0R4BeBtAewhAeRpQ4CeBtwhA8?RpilAeBtwhC8glA8BeA8BtF8AeH8AeD8JeAgH",
-      "id": "stray-cannon-tst",
-      "name": "Stray Cannon TST",
-      "openerName": "Stray Cannon",
-      "variationName": "TST"
+      "code" : "v115@zgglIeglIehlAeAtAeR4Beg0RpBtR4Ceg0RpAtzhAe?h0JeAgH",
+      "id" : "tki-3-castle-top",
+      "name" : "TKI 3 Castle Top",
+      "openerName" : "TKI 3",
+      "variationName" : "Castle Top"
     },
     {
-      "code": "v115@KhAtAeR4Beg0RpBtR4Ceg0RpAtzhAeh0JeAgH",
-      "id": "tki-3-base",
-      "name": "TKI 3 Base",
-      "openerName": "TKI 3",
-      "variationName": "Base"
+      "code" : "v115@BhilFeAtglR4Beg0RpBtR4Ceg0RpAtzhAeh0JeAgHB?hxwglFeQpwwxSEehWQLwSFegWQeAAA",
+      "id" : "tki-3-flat-top",
+      "name" : "TKI 3 Flat Top",
+      "openerName" : "TKI 3",
+      "variationName" : "Flat Top"
     },
     {
-      "code": "v115@zgglIeglIehlAeAtAeR4Beg0RpBtR4Ceg0RpAtzhAe?h0JeAgH",
-      "id": "tki-3-castle-top",
-      "name": "TKI 3 Castle Top",
-      "openerName": "TKI 3",
-      "variationName": "Castle Top"
+      "code" : "v115@\/gglGeilAtAeR4Beg0RpBtR4Ceg0RpAtzhAeh0JeAg?H",
+      "id" : "tki-3-fonzie-variant",
+      "name" : "TKI 3 Fonzie Variant",
+      "openerName" : "TKI 3",
+      "variationName" : "Fonzie Variant"
     },
     {
-      "code": "v115@BhilFeAtglR4Beg0RpBtR4Ceg0RpAtzhAeh0JeAgHB?hxwglFeQpwwxSEehWQLwSFegWQeAAA",
-      "id": "tki-3-flat-top",
-      "name": "TKI 3 Flat Top",
-      "openerName": "TKI 3",
-      "variationName": "Flat Top"
-    },
-    {
-      "code": "v115@/gglGeilAtAeR4Beg0RpBtR4Ceg0RpAtzhAeh0JeAg?H",
-      "id": "tki-3-fonzie-variant",
-      "name": "TKI 3 Fonzie Variant",
-      "openerName": "TKI 3",
-      "variationName": "Fonzie Variant"
-    },
-    {
-      "code": "v115@9gi0BezhglRpg0BeBtilRpA8CeBtR4D8AeB8R4A8Je?AgH",
-      "id": "tki-3-perfect-clear-attempt",
-      "name": "TKI 3 Perfect Clear Attempt",
-      "openerName": "TKI 3",
-      "variationName": "Perfect Clear Attempt"
+      "code" : "v115@9gi0BezhglRpg0BeBtilRpA8CeBtR4D8AeB8R4A8Je?AgH",
+      "id" : "tki-3-perfect-clear-attempt",
+      "name" : "TKI 3 Perfect Clear Attempt",
+      "openerName" : "TKI 3",
+      "variationName" : "Perfect Clear Attempt"
     }
   ],
-  "version": 1
+  "version" : 1
 }
