@@ -35,6 +35,7 @@
 #include <QStyleFactory>
 
 #include <array>
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -43,6 +44,10 @@ namespace {
 
 constexpr int kColumns = 10;
 constexpr int kRows = 20;
+constexpr int kFumenRows = 24;
+constexpr int kFumenBlocks = kColumns * kFumenRows;
+constexpr int kVisibleTopRow = 3;
+constexpr int kVisibleBottomRow = kVisibleTopRow + kRows;
 
 struct Opener {
     QString id;
@@ -51,9 +56,16 @@ struct Opener {
     QString code;
 };
 
+struct FumenOperation {
+    int type = 0;
+    int rotation = 0;
+    int position = kVisibleTopRow * kColumns + 4;
+};
+
 struct DecodedFumen {
-    std::array<int, kColumns * kRows> cells{};
-    int pages = 0;
+    std::vector<std::array<int, kFumenBlocks>> pages;
+    std::vector<FumenOperation> operations;
+    int pageCount = 0;
 };
 
 QColor cellColor(int value) {
@@ -82,6 +94,70 @@ QString cellName(int value) {
     case 8: return "Gray";
     default: return "Empty";
     }
+}
+
+int mirrorColor(int value) {
+    if (value == 2) return 6;
+    if (value == 6) return 2;
+    if (value == 4) return 7;
+    if (value == 7) return 4;
+    return value;
+}
+
+const std::array<std::array<std::array<QPoint, 4>, 4>, 8> &fumenPieceOffsets() {
+    static const std::array<std::array<std::array<QPoint, 4>, 4>, 8> offsets = {{
+        {{{QPoint(0, 0), QPoint(0, 0), QPoint(0, 0), QPoint(0, 0)},
+          {QPoint(0, 0), QPoint(0, 0), QPoint(0, 0), QPoint(0, 0)},
+          {QPoint(0, 0), QPoint(0, 0), QPoint(0, 0), QPoint(0, 0)},
+          {QPoint(0, 0), QPoint(0, 0), QPoint(0, 0), QPoint(0, 0)}}},
+        {{{QPoint(0, 1), QPoint(1, 1), QPoint(2, 1), QPoint(3, 1)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(1, 2), QPoint(1, 3)},
+          {QPoint(0, 1), QPoint(1, 1), QPoint(2, 1), QPoint(3, 1)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(1, 2), QPoint(1, 3)}}},
+        {{{QPoint(0, 1), QPoint(1, 1), QPoint(2, 1), QPoint(0, 2)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(1, 2), QPoint(2, 2)},
+          {QPoint(2, 0), QPoint(0, 1), QPoint(1, 1), QPoint(2, 1)},
+          {QPoint(0, 0), QPoint(1, 0), QPoint(1, 1), QPoint(1, 2)}}},
+        {{{QPoint(1, 1), QPoint(2, 1), QPoint(1, 2), QPoint(2, 2)},
+          {QPoint(1, 1), QPoint(2, 1), QPoint(1, 2), QPoint(2, 2)},
+          {QPoint(1, 1), QPoint(2, 1), QPoint(1, 2), QPoint(2, 2)},
+          {QPoint(1, 1), QPoint(2, 1), QPoint(1, 2), QPoint(2, 2)}}},
+        {{{QPoint(0, 1), QPoint(1, 1), QPoint(1, 2), QPoint(2, 2)},
+          {QPoint(2, 0), QPoint(1, 1), QPoint(2, 1), QPoint(1, 2)},
+          {QPoint(0, 1), QPoint(1, 1), QPoint(1, 2), QPoint(2, 2)},
+          {QPoint(2, 0), QPoint(1, 1), QPoint(2, 1), QPoint(1, 2)}}},
+        {{{QPoint(0, 1), QPoint(1, 1), QPoint(2, 1), QPoint(1, 2)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(2, 1), QPoint(1, 2)},
+          {QPoint(1, 0), QPoint(0, 1), QPoint(1, 1), QPoint(2, 1)},
+          {QPoint(1, 0), QPoint(0, 1), QPoint(1, 1), QPoint(1, 2)}}},
+        {{{QPoint(0, 1), QPoint(1, 1), QPoint(2, 1), QPoint(2, 2)},
+          {QPoint(1, 0), QPoint(2, 0), QPoint(1, 1), QPoint(1, 2)},
+          {QPoint(0, 0), QPoint(0, 1), QPoint(1, 1), QPoint(2, 1)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(0, 2), QPoint(1, 2)}}},
+        {{{QPoint(1, 1), QPoint(2, 1), QPoint(0, 2), QPoint(1, 2)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(2, 1), QPoint(2, 2)},
+          {QPoint(1, 1), QPoint(2, 1), QPoint(0, 2), QPoint(1, 2)},
+          {QPoint(1, 0), QPoint(1, 1), QPoint(2, 1), QPoint(2, 2)}}}
+    }};
+    return offsets;
+}
+
+std::vector<int> fumenOperationCells(const FumenOperation &operation) {
+    std::vector<int> cells;
+    if (operation.type <= 0 || operation.type >= 8) {
+        return cells;
+    }
+    const int originX = operation.position % kColumns;
+    const int originY = operation.position / kColumns;
+    const auto &offsets = fumenPieceOffsets()[operation.type][operation.rotation % 4];
+    for (const QPoint &offset : offsets) {
+        const int x = originX + offset.x() - 1;
+        const int y = originY + offset.y() - 1;
+        if (0 <= x && x < kColumns && 0 <= y && y < kFumenRows - 1) {
+            cells.push_back(y * kColumns + x);
+        }
+    }
+    return cells;
 }
 
 QString findRepoRoot(QString start) {
@@ -134,23 +210,9 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
         return std::nullopt;
     }
 
-    constexpr int kFumenRows = 24;
-    constexpr int kFumenBlocks = kColumns * kFumenRows;
-    const int pieceOffsets[] = {
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,1,1,1,2,1,3,1,1,0,1,1,1,2,1,3,0,1,1,1,2,1,3,1,1,0,1,1,1,2,1,3,
-        0,1,1,1,2,1,0,2,1,0,1,1,1,2,2,2,2,0,0,1,1,1,2,1,0,0,1,0,1,1,1,2,
-        1,1,2,1,1,2,2,2,1,1,2,1,1,2,2,2,1,1,2,1,1,2,2,2,1,1,2,1,1,2,2,2,
-        0,1,1,1,1,2,2,2,2,0,1,1,2,1,1,2,0,1,1,1,1,2,2,2,2,0,1,1,2,1,1,2,
-        0,1,1,1,2,1,1,2,1,0,1,1,2,1,1,2,1,0,0,1,1,1,2,1,1,0,0,1,1,1,1,2,
-        0,1,1,1,2,1,2,2,1,0,2,0,1,1,1,2,0,0,0,1,1,1,2,1,1,0,1,1,0,2,1,2,
-        1,1,2,1,0,2,1,2,0,0,0,1,1,1,1,2,1,1,2,1,0,2,1,2,0,0,0,1,1,1,1,2
-    };
-
     std::array<int, kFumenBlocks> field{};
     field.fill(0);
-    std::array<int, kFumenBlocks> displayField{};
-    displayField.fill(0);
+    DecodedFumen decoded;
     int cursor = 0;
     int repeatCount = 0;
     int pages = 0;
@@ -182,9 +244,7 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
             repeatCount--;
         }
 
-        if (pages == 0) {
-            displayField = field;
-        }
+        std::array<int, kFumenBlocks> pageField = field;
 
         int tmp = take();
         tmp += take() * 64;
@@ -204,6 +264,11 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
         tmp /= 2;
         const bool noLock = (tmp % 2) != 0;
 
+        FumenOperation operation;
+        operation.type = qBound(0, piece, 7);
+        operation.rotation = qBound(0, rotation, 3);
+        operation.position = qBound(0, position, kFumenBlocks - 1);
+
         if (hasComment) {
             int commentHeader = take();
             commentHeader += take() * 64;
@@ -217,28 +282,16 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
             }
         }
 
-        if (pages == 0 && piece > 0) {
-            for (int block = 0; block < 4; ++block) {
-                const int base = piece * 32 + rotation * 8 + block * 2;
-                const int x = pieceOffsets[base];
-                const int y = pieceOffsets[base + 1];
-                const int index = position + y * kColumns + x - 11;
-                if (0 <= index && index < kFumenBlocks) {
-                    displayField[index] = piece;
-                }
-            }
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            pageField[index] = 0;
         }
+        decoded.pages.push_back(pageField);
+        decoded.operations.push_back(operation);
 
         if (!noLock) {
             if (piece > 0) {
-                for (int block = 0; block < 4; ++block) {
-                    const int base = piece * 32 + rotation * 8 + block * 2;
-                    const int x = pieceOffsets[base];
-                    const int y = pieceOffsets[base + 1];
-                    const int index = position + y * kColumns + x - 11;
-                    if (0 <= index && index < kFumenBlocks) {
-                        field[index] = piece;
-                    }
+                for (int index : fumenOperationCells(operation)) {
+                    field[index] = piece;
                 }
             }
 
@@ -283,15 +336,12 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
         ++pages;
     }
 
-    DecodedFumen decoded;
-    decoded.cells.fill(0);
-    decoded.pages = pages;
-    const int topRow = 3;
-    for (int row = 0; row < kRows; ++row) {
-        for (int col = 0; col < kColumns; ++col) {
-            int value = displayField[(topRow + row) * kColumns + col];
-            decoded.cells[row * kColumns + col] = qBound(0, value, 8);
-        }
+    decoded.pageCount = pages;
+    if (decoded.pages.empty()) {
+        std::array<int, kFumenBlocks> blank{};
+        blank.fill(0);
+        decoded.pages.push_back(blank);
+        decoded.operations.push_back(FumenOperation());
     }
     return decoded;
 }
@@ -374,9 +424,6 @@ public:
     void setCells(const std::array<int, kColumns * kRows> &cells) {
         cells_ = cells;
         refreshAllCells();
-        if (onChanged) {
-            onChanged();
-        }
     }
 
     void setPaintValue(int value) {
@@ -399,6 +446,7 @@ public:
     }
 
     std::function<void()> onChanged;
+    std::function<bool(int)> onCellPressed;
 
 protected:
     void resizeEvent(QResizeEvent *) override {
@@ -468,6 +516,9 @@ private:
             return;
         }
         lastPainted_ = index;
+        if (onCellPressed && onCellPressed(index)) {
+            return;
+        }
         const int nextValue = eraseStroke_ ? 0 : paintValue_;
         if (cells_[index] == nextValue) {
             return;
@@ -501,14 +552,6 @@ private:
         cellWidgets_[index]->setValue(cells_[index]);
     }
 
-    int mirrorColor(int value) const {
-        if (value == 2) return 6;
-        if (value == 6) return 2;
-        if (value == 4) return 7;
-        if (value == 7) return 4;
-        return value;
-    }
-
     std::array<int, kColumns * kRows> cells_{};
     std::array<BoardCellWidget *, kColumns * kRows> cellWidgets_{};
     int paintValue_ = 8;
@@ -525,7 +568,10 @@ public:
         setWindowTitle("Solution Finder Enhanced - Qt");
         resize(1180, 760);
         buildUi();
+        ensureFumenState();
         loadOpeners();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
         updateGeneratedField();
     }
 
@@ -669,11 +715,20 @@ private:
         toolbar->addStretch(1);
         editorLayout->addLayout(toolbar);
 
+        auto *editorContent = new QHBoxLayout();
+        editorContent->setSpacing(12);
         board_ = new BoardWidget(panel);
         board_->onChanged = [this]() {
+            syncCurrentPageFromBoard();
             updateGeneratedField();
+            updateFumenCodeFromPages();
         };
-        editorLayout->addWidget(board_, 1);
+        board_->onCellPressed = [this](int visibleIndex) {
+            return handleBoardCellPressed(visibleIndex);
+        };
+        editorContent->addWidget(board_, 1);
+        editorContent->addWidget(buildFumenControlsPanel(panel), 0);
+        editorLayout->addLayout(editorContent, 1);
 
         auto *fumenLabel = new QLabel("Fumen Code", panel);
         fumenEdit_ = new QPlainTextEdit(panel);
@@ -696,8 +751,118 @@ private:
 
         connect(sectionTabs, &QTabBar::currentChanged, stack, &QStackedWidget::setCurrentIndex);
 
-        connect(clearButton, &QPushButton::clicked, board_, &BoardWidget::clearBoard);
-        connect(mirrorButton, &QPushButton::clicked, board_, &BoardWidget::mirror);
+        connect(clearButton, &QPushButton::clicked, this, [this]() {
+            clearCurrentPage();
+        });
+        connect(mirrorButton, &QPushButton::clicked, this, [this]() {
+            mirrorCurrentPage();
+        });
+        connect(fumenEdit_, &QPlainTextEdit::textChanged, this, [this]() {
+            loadFumenCodeFromText();
+        });
+        return panel;
+    }
+
+    QWidget *buildFumenControlsPanel(QWidget *parent) {
+        auto *panel = new QWidget(parent);
+        panel->setMinimumWidth(240);
+        panel->setMaximumWidth(300);
+        auto *layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(10);
+
+        auto *minoGroup = new QGroupBox("Mino", panel);
+        auto *minoLayout = new QVBoxLayout(minoGroup);
+        placeMinoCheck_ = new QCheckBox("Place mino", minoGroup);
+        minoPieceBox_ = new QComboBox(minoGroup);
+        minoPieceBox_->addItem("I", 1);
+        minoPieceBox_->addItem("L", 2);
+        minoPieceBox_->addItem("O", 3);
+        minoPieceBox_->addItem("Z", 4);
+        minoPieceBox_->addItem("T", 5);
+        minoPieceBox_->addItem("J", 6);
+        minoPieceBox_->addItem("S", 7);
+        minoLayout->addWidget(placeMinoCheck_);
+        minoLayout->addWidget(minoPieceBox_);
+        auto *rotateRow = new QHBoxLayout();
+        auto *ccwButton = new QPushButton("CCW", minoGroup);
+        auto *cwButton = new QPushButton("CW", minoGroup);
+        auto *clearMinoButton = new QPushButton("Clear", minoGroup);
+        rotateRow->addWidget(ccwButton);
+        rotateRow->addWidget(cwButton);
+        rotateRow->addWidget(clearMinoButton);
+        minoLayout->addLayout(rotateRow);
+        auto *moveGrid = new QGridLayout();
+        auto *upButton = new QPushButton("Up", minoGroup);
+        auto *leftButton = new QPushButton("Left", minoGroup);
+        auto *downButton = new QPushButton("Down", minoGroup);
+        auto *rightButton = new QPushButton("Right", minoGroup);
+        moveGrid->addWidget(upButton, 0, 1);
+        moveGrid->addWidget(leftButton, 1, 0);
+        moveGrid->addWidget(downButton, 1, 1);
+        moveGrid->addWidget(rightButton, 1, 2);
+        minoLayout->addLayout(moveGrid);
+        layout->addWidget(minoGroup);
+
+        auto *pagesGroup = new QGroupBox("Pages", panel);
+        auto *pagesLayout = new QVBoxLayout(pagesGroup);
+        auto *navRow = new QHBoxLayout();
+        prevPageButton_ = new QPushButton("Previous", pagesGroup);
+        pageLabel_ = new QLabel("1/1", pagesGroup);
+        pageLabel_->setAlignment(Qt::AlignCenter);
+        nextPageButton_ = new QPushButton("Next", pagesGroup);
+        navRow->addWidget(prevPageButton_);
+        navRow->addWidget(pageLabel_);
+        navRow->addWidget(nextPageButton_);
+        pagesLayout->addLayout(navRow);
+        auto *pageActions = new QHBoxLayout();
+        addPageButton_ = new QPushButton("Add", pagesGroup);
+        trimPagesButton_ = new QPushButton("Trim", pagesGroup);
+        pageActions->addWidget(addPageButton_);
+        pageActions->addWidget(trimPagesButton_);
+        pagesLayout->addLayout(pageActions);
+        layout->addWidget(pagesGroup);
+
+        auto *outputCodeButton = new QPushButton("Output Code", panel);
+        layout->addWidget(outputCodeButton);
+        layout->addStretch(1);
+
+        connect(placeMinoCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+            if (updatingFumenControls_) {
+                return;
+            }
+            if (!checked) {
+                currentOperation_ = FumenOperation();
+            } else if (currentOperation_.type == 0) {
+                currentOperation_.type = minoPieceBox_->currentData().toInt();
+            }
+            saveCurrentFumenPage();
+            updateBoardFromFumenState();
+            updateFumenCodeFromPages();
+        });
+        connect(minoPieceBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            if (updatingFumenControls_) {
+                return;
+            }
+            currentOperation_.type = minoPieceBox_->currentData().toInt();
+            placeMinoCheck_->setChecked(true);
+            saveCurrentFumenPage();
+            updateBoardFromFumenState();
+            updateFumenCodeFromPages();
+        });
+        connect(ccwButton, &QPushButton::clicked, this, [this]() { rotateCurrentOperation(-1); });
+        connect(cwButton, &QPushButton::clicked, this, [this]() { rotateCurrentOperation(1); });
+        connect(clearMinoButton, &QPushButton::clicked, this, [this]() { clearCurrentOperation(); });
+        connect(upButton, &QPushButton::clicked, this, [this]() { moveCurrentOperation(0, -1); });
+        connect(leftButton, &QPushButton::clicked, this, [this]() { moveCurrentOperation(-1, 0); });
+        connect(downButton, &QPushButton::clicked, this, [this]() { moveCurrentOperation(0, 1); });
+        connect(rightButton, &QPushButton::clicked, this, [this]() { moveCurrentOperation(1, 0); });
+        connect(prevPageButton_, &QPushButton::clicked, this, [this]() { goToFumenPage(currentFumenPage_ - 1); });
+        connect(nextPageButton_, &QPushButton::clicked, this, [this]() { goToFumenPage(currentFumenPage_ + 1); });
+        connect(addPageButton_, &QPushButton::clicked, this, [this]() { addFumenPage(); });
+        connect(trimPagesButton_, &QPushButton::clicked, this, [this]() { trimFollowingFumenPages(); });
+        connect(outputCodeButton, &QPushButton::clicked, this, [this]() { updateFumenCodeFromPages(); });
+
         return panel;
     }
 
@@ -741,6 +906,384 @@ private:
             "I,O,T       explicit queue\n");
         tabs->addTab(tips, "Notes");
         return tabs;
+    }
+
+    void ensureFumenState() {
+        if (!fumenPages_.empty()) {
+            return;
+        }
+        std::array<int, kFumenBlocks> blank{};
+        blank.fill(0);
+        fumenPages_.push_back(blank);
+        fumenOperations_.push_back(FumenOperation());
+        currentFumenPage_ = 0;
+        currentOperation_ = FumenOperation();
+    }
+
+    std::array<int, kColumns * kRows> visibleCellsForPage() const {
+        std::array<int, kColumns * kRows> visible{};
+        visible.fill(0);
+        if (fumenPages_.empty()) {
+            return visible;
+        }
+        std::array<int, kFumenBlocks> page = fumenPages_[currentFumenPage_];
+        if (placeMinoCheck_ && placeMinoCheck_->isChecked() && currentOperation_.type > 0) {
+            for (int index : fumenOperationCells(currentOperation_)) {
+                if (0 <= index && index < kFumenBlocks) {
+                    page[index] = currentOperation_.type;
+                }
+            }
+        }
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const int source = (kVisibleTopRow + row) * kColumns + col;
+                visible[row * kColumns + col] = qBound(0, page[source], 8);
+            }
+        }
+        return visible;
+    }
+
+    void syncCurrentPageFromBoard() {
+        ensureFumenState();
+        const auto &visible = board_->cells();
+        std::array<int, kFumenBlocks> &page = fumenPages_[currentFumenPage_];
+        std::vector<int> protectedCells;
+        if (placeMinoCheck_ && placeMinoCheck_->isChecked() && currentOperation_.type > 0) {
+            protectedCells = fumenOperationCells(currentOperation_);
+        }
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const int source = (kVisibleTopRow + row) * kColumns + col;
+                if (std::find(protectedCells.begin(), protectedCells.end(), source) == protectedCells.end()) {
+                    page[source] = visible[row * kColumns + col];
+                }
+            }
+        }
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            page[index] = 0;
+        }
+        saveCurrentFumenPage();
+        updatePageControls();
+    }
+
+    void saveCurrentFumenPage() {
+        ensureFumenState();
+        if (currentFumenPage_ < 0 || currentFumenPage_ >= static_cast<int>(fumenPages_.size())) {
+            return;
+        }
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            fumenPages_[currentFumenPage_][index] = 0;
+        }
+        if (currentFumenPage_ >= static_cast<int>(fumenOperations_.size())) {
+            fumenOperations_.resize(fumenPages_.size());
+        }
+        fumenOperations_[currentFumenPage_] = (placeMinoCheck_ && placeMinoCheck_->isChecked()) ? currentOperation_ : FumenOperation();
+    }
+
+    void replaceFumenPages(const std::vector<std::array<int, kFumenBlocks>> &pages,
+                           const std::vector<FumenOperation> &operations) {
+        fumenPages_ = pages;
+        if (fumenPages_.empty()) {
+            std::array<int, kFumenBlocks> blank{};
+            blank.fill(0);
+            fumenPages_.push_back(blank);
+        }
+        for (auto &page : fumenPages_) {
+            for (int index = 230; index < kFumenBlocks; ++index) {
+                page[index] = 0;
+            }
+        }
+        fumenOperations_ = operations;
+        fumenOperations_.resize(fumenPages_.size());
+        currentFumenPage_ = 0;
+        currentOperation_ = fumenOperations_[currentFumenPage_];
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(currentOperation_.type > 0);
+            updatingFumenControls_ = false;
+        }
+        updateMinoControls();
+        updateBoardFromFumenState();
+    }
+
+    void updateBoardFromFumenState() {
+        ensureFumenState();
+        if (board_) {
+            board_->setCells(visibleCellsForPage());
+        }
+        updateGeneratedField();
+        updatePageControls();
+    }
+
+    bool handleBoardCellPressed(int visibleIndex) {
+        if (!placeMinoCheck_ || !placeMinoCheck_->isChecked()) {
+            return false;
+        }
+        const int visibleRow = visibleIndex / kColumns;
+        const int col = visibleIndex % kColumns;
+        currentOperation_.type = minoPieceBox_ ? minoPieceBox_->currentData().toInt() : qMax(1, currentOperation_.type);
+        currentOperation_.position = (kVisibleTopRow + visibleRow) * kColumns + col;
+        saveCurrentFumenPage();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+        return true;
+    }
+
+    void updateMinoControls() {
+        if (!minoPieceBox_) {
+            return;
+        }
+        const int type = currentOperation_.type > 0 ? currentOperation_.type : 1;
+        updatingFumenControls_ = true;
+        for (int i = 0; i < minoPieceBox_->count(); ++i) {
+            if (minoPieceBox_->itemData(i).toInt() == type) {
+                minoPieceBox_->setCurrentIndex(i);
+                break;
+            }
+        }
+        updatingFumenControls_ = false;
+    }
+
+    void updatePageControls() {
+        ensureFumenState();
+        if (pageLabel_) {
+            pageLabel_->setText(QString("%1/%2").arg(currentFumenPage_ + 1).arg(fumenPages_.size()));
+        }
+        if (prevPageButton_) {
+            prevPageButton_->setEnabled(currentFumenPage_ > 0);
+        }
+        if (nextPageButton_) {
+            nextPageButton_->setEnabled(currentFumenPage_ + 1 < static_cast<int>(fumenPages_.size()));
+        }
+        if (trimPagesButton_) {
+            trimPagesButton_->setEnabled(currentFumenPage_ + 1 < static_cast<int>(fumenPages_.size()));
+        }
+    }
+
+    void rotateCurrentOperation(int delta) {
+        if (!placeMinoCheck_) {
+            return;
+        }
+        placeMinoCheck_->setChecked(true);
+        currentOperation_.type = minoPieceBox_ ? minoPieceBox_->currentData().toInt() : qMax(1, currentOperation_.type);
+        currentOperation_.rotation = (currentOperation_.rotation + delta + 4) % 4;
+        saveCurrentFumenPage();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    void moveCurrentOperation(int dx, int dy) {
+        if (!placeMinoCheck_) {
+            return;
+        }
+        placeMinoCheck_->setChecked(true);
+        currentOperation_.type = minoPieceBox_ ? minoPieceBox_->currentData().toInt() : qMax(1, currentOperation_.type);
+        const int x = currentOperation_.position % kColumns;
+        const int y = currentOperation_.position / kColumns;
+        const int nextX = qBound(0, x + dx, kColumns - 1);
+        const int nextY = qBound(kVisibleTopRow, y + dy, kVisibleBottomRow - 1);
+        currentOperation_.position = nextY * kColumns + nextX;
+        saveCurrentFumenPage();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    void clearCurrentOperation() {
+        currentOperation_ = FumenOperation();
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(false);
+            updatingFumenControls_ = false;
+        }
+        saveCurrentFumenPage();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    std::array<int, kFumenBlocks> currentPageAfterLockAndLineClear() {
+        ensureFumenState();
+        std::array<int, kFumenBlocks> cells = fumenPages_[currentFumenPage_];
+        if (placeMinoCheck_ && placeMinoCheck_->isChecked() && currentOperation_.type > 0) {
+            for (int index : fumenOperationCells(currentOperation_)) {
+                if (0 <= index && index < kFumenBlocks) {
+                    cells[index] = currentOperation_.type;
+                }
+            }
+        }
+        std::array<int, kFumenBlocks> result{};
+        result.fill(0);
+        int writeRow = kFumenRows - 2;
+        for (int readRow = kFumenRows - 2; readRow >= 0; --readRow) {
+            bool full = true;
+            for (int col = 0; col < kColumns; ++col) {
+                if (cells[readRow * kColumns + col] == 0) {
+                    full = false;
+                    break;
+                }
+            }
+            if (!full) {
+                for (int col = 0; col < kColumns; ++col) {
+                    result[writeRow * kColumns + col] = cells[readRow * kColumns + col];
+                }
+                --writeRow;
+            }
+        }
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            result[index] = 0;
+        }
+        return result;
+    }
+
+    void addFumenPage() {
+        ensureFumenState();
+        syncCurrentPageFromBoard();
+        const int insertIndex = currentFumenPage_ + 1;
+        fumenPages_.insert(fumenPages_.begin() + insertIndex, currentPageAfterLockAndLineClear());
+        fumenOperations_.insert(fumenOperations_.begin() + insertIndex, FumenOperation());
+        goToFumenPage(insertIndex);
+        updateFumenCodeFromPages();
+    }
+
+    void goToFumenPage(int page) {
+        ensureFumenState();
+        if (page < 0 || page >= static_cast<int>(fumenPages_.size())) {
+            return;
+        }
+        syncCurrentPageFromBoard();
+        currentFumenPage_ = page;
+        currentOperation_ = fumenOperations_[currentFumenPage_];
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(currentOperation_.type > 0);
+            updatingFumenControls_ = false;
+        }
+        updateMinoControls();
+        updateBoardFromFumenState();
+    }
+
+    void trimFollowingFumenPages() {
+        ensureFumenState();
+        syncCurrentPageFromBoard();
+        if (currentFumenPage_ + 1 >= static_cast<int>(fumenPages_.size())) {
+            return;
+        }
+        fumenPages_.erase(fumenPages_.begin() + currentFumenPage_ + 1, fumenPages_.end());
+        fumenOperations_.erase(fumenOperations_.begin() + currentFumenPage_ + 1, fumenOperations_.end());
+        updatePageControls();
+        updateFumenCodeFromPages();
+    }
+
+    void clearCurrentPage() {
+        ensureFumenState();
+        fumenPages_[currentFumenPage_].fill(0);
+        currentOperation_ = FumenOperation();
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(false);
+            updatingFumenControls_ = false;
+        }
+        saveCurrentFumenPage();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    void mirrorCurrentPage() {
+        ensureFumenState();
+        std::array<int, kFumenBlocks> mirrored{};
+        mirrored.fill(0);
+        const auto &source = fumenPages_[currentFumenPage_];
+        for (int row = 0; row < kFumenRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                mirrored[row * kColumns + (kColumns - 1 - col)] = mirrorColor(source[row * kColumns + col]);
+            }
+        }
+        fumenPages_[currentFumenPage_] = mirrored;
+        if (currentOperation_.type > 0) {
+            currentOperation_.type = mirrorColor(currentOperation_.type);
+            currentOperation_.position = (currentOperation_.position / kColumns) * kColumns + (kColumns - 1 - (currentOperation_.position % kColumns));
+        }
+        saveCurrentFumenPage();
+        updateMinoControls();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    QString encodeFumenPages() {
+        ensureFumenState();
+        QString output = "v115@";
+        const QString table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::array<int, kFumenBlocks> previous{};
+        previous.fill(0);
+
+        std::vector<std::array<int, kFumenBlocks>> pages = fumenPages_;
+        if (currentFumenPage_ >= 0 && currentFumenPage_ < static_cast<int>(pages.size()) &&
+            placeMinoCheck_ && placeMinoCheck_->isChecked() && currentOperation_.type > 0) {
+            for (int index : fumenOperationCells(currentOperation_)) {
+                if (0 <= index && index < kFumenBlocks) {
+                    pages[currentFumenPage_][index] = currentOperation_.type;
+                }
+            }
+        }
+
+        for (int pageIndex = 0; pageIndex < static_cast<int>(pages.size()); ++pageIndex) {
+            std::array<int, kFumenBlocks> page = pages[pageIndex];
+            for (int index = 230; index < kFumenBlocks; ++index) {
+                page[index] = 0;
+            }
+            int index = 0;
+            while (index < kFumenBlocks) {
+                const int diff = qBound(-8, page[index] - previous[index], 8);
+                int run = 0;
+                while (index + run + 1 < kFumenBlocks &&
+                       run + 1 < kFumenBlocks &&
+                       qBound(-8, page[index + run + 1] - previous[index + run + 1], 8) == diff) {
+                    ++run;
+                }
+                const int value = (diff + 8) * kFumenBlocks + run;
+                output += table[value % 64];
+                output += table[(value / 64) % 64];
+                index += run + 1;
+            }
+
+            previous = page;
+            const int action = 0
+                               + 0 * 8
+                               + 0 * 8 * 4
+                               + 0 * 8 * 4 * kFumenBlocks
+                               + 0 * 8 * 4 * kFumenBlocks * 2
+                               + (pageIndex == 0 ? 1 : 0) * 8 * 4 * kFumenBlocks * 4
+                               + 0 * 8 * 4 * kFumenBlocks * 8
+                               + 1 * 8 * 4 * kFumenBlocks * 16;
+            output += table[action % 64];
+            output += table[(action / 64) % 64];
+            output += table[(action / 4096) % 64];
+        }
+        return output;
+    }
+
+    void updateFumenCodeFromPages() {
+        if (!fumenEdit_ || updatingFumenEdit_) {
+            return;
+        }
+        updatingFumenEdit_ = true;
+        fumenEdit_->setPlainText(encodeFumenPages());
+        updatingFumenEdit_ = false;
+    }
+
+    void loadFumenCodeFromText() {
+        if (updatingFumenEdit_ || !fumenEdit_) {
+            return;
+        }
+        const QString code = fumenEdit_->toPlainText().trimmed();
+        if (!code.startsWith("v115@")) {
+            return;
+        }
+        const auto decoded = decodeFumenV115(code);
+        if (!decoded.has_value()) {
+            return;
+        }
+        replaceFumenPages(decoded->pages, decoded->operations);
+        updateGeneratedField();
     }
 
     void selectPaint(int value) {
@@ -805,7 +1348,9 @@ private:
         const QString id = openerVariationBox_->currentData().toString();
         for (const Opener &opener : openers_) {
             if (opener.id == id) {
+                updatingFumenEdit_ = true;
                 fumenEdit_->setPlainText(opener.code);
+                updatingFumenEdit_ = false;
                 if (opener.code.isEmpty()) {
                     board_->clearBoard();
                     outputEdit_->appendPlainText("Loaded opener: " + opener.openerName + " - " + opener.variationName);
@@ -813,11 +1358,11 @@ private:
                 }
                 const auto decoded = decodeFumenV115(opener.code);
                 if (decoded.has_value()) {
-                    board_->setCells(decoded->cells);
+                    replaceFumenPages(decoded->pages, decoded->operations);
                     outputEdit_->appendPlainText(QString("Loaded opener: %1 - %2 (%3 page%4)")
                                                      .arg(opener.openerName, opener.variationName)
-                                                     .arg(decoded->pages)
-                                                     .arg(decoded->pages == 1 ? "" : "s"));
+                                                     .arg(decoded->pageCount)
+                                                     .arg(decoded->pageCount == 1 ? "" : "s"));
                 } else {
                     outputEdit_->appendPlainText("Could not decode opener fumen: " + opener.openerName + " - " + opener.variationName);
                 }
@@ -1001,12 +1546,25 @@ private:
     QCheckBox *verboseCheck_ = nullptr;
     QComboBox *openerGroupBox_ = nullptr;
     QComboBox *openerVariationBox_ = nullptr;
+    QCheckBox *placeMinoCheck_ = nullptr;
+    QComboBox *minoPieceBox_ = nullptr;
+    QLabel *pageLabel_ = nullptr;
+    QPushButton *prevPageButton_ = nullptr;
+    QPushButton *nextPageButton_ = nullptr;
+    QPushButton *addPageButton_ = nullptr;
+    QPushButton *trimPagesButton_ = nullptr;
     QPlainTextEdit *fumenEdit_ = nullptr;
     QPlainTextEdit *generatedField_ = nullptr;
     QPlainTextEdit *outputEdit_ = nullptr;
     QPushButton *runButton_ = nullptr;
     QPushButton *cancelButton_ = nullptr;
     std::vector<QPushButton *> paintButtons_;
+    std::vector<std::array<int, kFumenBlocks>> fumenPages_;
+    std::vector<FumenOperation> fumenOperations_;
+    FumenOperation currentOperation_;
+    int currentFumenPage_ = 0;
+    bool updatingFumenEdit_ = false;
+    bool updatingFumenControls_ = false;
     QProcess *process_ = nullptr;
 };
 
