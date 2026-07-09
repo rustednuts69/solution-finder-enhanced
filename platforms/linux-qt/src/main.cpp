@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -278,6 +279,48 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
 }
 
 class BoardWidget : public QWidget {
+    class BoardCellWidget : public QFrame {
+    public:
+        explicit BoardCellWidget(QWidget *parent = nullptr)
+            : QFrame(parent) {
+            setAttribute(Qt::WA_OpaquePaintEvent, true);
+            setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        }
+
+        void setValue(int value) {
+            if (value_ == value) {
+                return;
+            }
+            value_ = value;
+            update();
+        }
+
+    protected:
+        void paintEvent(QPaintEvent *) override {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing, false);
+            const QRect r = rect();
+            if (value_ == 0) {
+                painter.fillRect(r, QColor("#080808"));
+                painter.setPen(QPen(QColor("#2a2a2a"), 1));
+                painter.drawRect(r.adjusted(0, 0, -1, -1));
+                return;
+            }
+
+            const QColor fill = cellColor(value_);
+            painter.fillRect(r, QColor("#050505"));
+            painter.fillRect(r.adjusted(1, 1, -1, -1), fill);
+            painter.setPen(QPen(fill.lighter(135), 2));
+            painter.drawLine(r.left() + 2, r.top() + 2, r.right() - 2, r.top() + 2);
+            painter.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
+            painter.setPen(QPen(QColor("#050505"), 1));
+            painter.drawRect(r.adjusted(0, 0, -1, -1));
+        }
+
+    private:
+        int value_ = 0;
+    };
+
 public:
     explicit BoardWidget(QWidget *parent = nullptr)
         : QWidget(parent) {
@@ -288,10 +331,7 @@ public:
         setObjectName("boardWidget");
         setStyleSheet("QWidget#boardWidget { background-color: #000000; border: 3px solid #050505; border-radius: 7px; }");
         for (int i = 0; i < kColumns * kRows; ++i) {
-            auto *cell = new QLabel(this);
-            cell->setAttribute(Qt::WA_TransparentForMouseEvents);
-            cell->setAlignment(Qt::AlignCenter);
-            cell->setAutoFillBackground(true);
+            auto *cell = new BoardCellWidget(this);
             cellWidgets_[i] = cell;
         }
         refreshAllCells();
@@ -440,25 +480,7 @@ private:
     }
 
     void refreshCell(int index) {
-        QLabel *cell = cellWidgets_[index];
-        const int value = cells_[index];
-        const QColor color = cellColor(value);
-        if (value == 0) {
-            cell->setText("");
-            cell->setStyleSheet(
-                "background-color: #050505;"
-                "border: 1px solid #202020;"
-            );
-        } else {
-            cell->setText("");
-            cell->setStyleSheet(QString(
-                "background-color: %1;"
-                "border-top: 2px solid %2;"
-                "border-left: 2px solid %2;"
-                "border-right: 2px solid #050505;"
-                "border-bottom: 2px solid #050505;")
-                                    .arg(color.name(), color.lighter(135).name()));
-        }
+        cellWidgets_[index]->setValue(cells_[index]);
     }
 
     int mirrorColor(int value) const {
@@ -470,7 +492,7 @@ private:
     }
 
     std::array<int, kColumns * kRows> cells_{};
-    std::array<QLabel *, kColumns * kRows> cellWidgets_{};
+    std::array<BoardCellWidget *, kColumns * kRows> cellWidgets_{};
     int paintValue_ = 8;
     int lastPainted_ = -1;
     bool painting_ = false;
