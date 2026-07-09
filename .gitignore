@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 macos-native-gui/.build/
+platforms/*/build/
 
 # Runtime/generated solver outputs
 output/
