@@ -2057,6 +2057,20 @@ final class AppModel: ObservableObject {
         updateCommandHeightIfNeeded()
     }
 
+    func deletePreviousFumenPages() {
+        saveCurrentFumenPage()
+        guard currentFumenPage > 0 else { return }
+        fumenPages.removeSubrange(0..<currentFumenPage)
+        fumenComments.removeSubrange(0..<currentFumenPage)
+        fumenOperations.removeSubrange(0..<currentFumenPage)
+        currentFumenPage = 0
+        nativeFumenCells = fumenPages[currentFumenPage]
+        fumenComment = fumenComments[currentFumenPage]
+        fumenOperation = fumenOperations[currentFumenPage]
+        fumenPlaceMino = fumenOperation.type > 0
+        updateCommandHeightIfNeeded()
+    }
+
     var fumenPageLabel: String {
         "\(currentFumenPage + 1)/\(fumenPages.count)"
     }
@@ -5204,20 +5218,30 @@ struct FumenEditorPane: View {
                                 }
                                 .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
                             }
-                            HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 Button {
                                     model.addFumenPage()
                                     commitAction()
                                 } label: {
                                     Label("Add", systemImage: "plus")
                                 }
-                                Button(role: .destructive) {
-                                    model.deleteFollowingFumenPages()
-                                    commitAction()
-                                } label: {
-                                    Label("Trim", systemImage: "scissors")
+                                HStack(spacing: 8) {
+                                    Button(role: .destructive) {
+                                        model.deletePreviousFumenPages()
+                                        commitAction()
+                                    } label: {
+                                        Label("Trim Before", systemImage: "scissors")
+                                    }
+                                    .disabled(model.currentFumenPage == 0)
+
+                                    Button(role: .destructive) {
+                                        model.deleteFollowingFumenPages()
+                                        commitAction()
+                                    } label: {
+                                        Label("Trim After", systemImage: "scissors")
+                                    }
+                                    .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
                                 }
-                                .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
                             }
                             TextField("Comment", text: $model.fumenComment)
                                 .textFieldStyle(.roundedBorder)

@@ -811,11 +811,13 @@ private:
         navRow->addWidget(pageLabel_);
         navRow->addWidget(nextPageButton_);
         pagesLayout->addLayout(navRow);
-        auto *pageActions = new QHBoxLayout();
+        auto *pageActions = new QGridLayout();
         addPageButton_ = new QPushButton("Add", pagesGroup);
-        trimPagesButton_ = new QPushButton("Trim", pagesGroup);
-        pageActions->addWidget(addPageButton_);
-        pageActions->addWidget(trimPagesButton_);
+        trimBeforePagesButton_ = new QPushButton("Trim Before", pagesGroup);
+        trimPagesButton_ = new QPushButton("Trim After", pagesGroup);
+        pageActions->addWidget(addPageButton_, 0, 0, 1, 2);
+        pageActions->addWidget(trimBeforePagesButton_, 1, 0);
+        pageActions->addWidget(trimPagesButton_, 1, 1);
         pagesLayout->addLayout(pageActions);
         layout->addWidget(pagesGroup);
 
@@ -856,6 +858,7 @@ private:
         connect(prevPageButton_, &QPushButton::clicked, this, [this]() { goToFumenPage(currentFumenPage_ - 1); });
         connect(nextPageButton_, &QPushButton::clicked, this, [this]() { goToFumenPage(currentFumenPage_ + 1); });
         connect(addPageButton_, &QPushButton::clicked, this, [this]() { addFumenPage(); });
+        connect(trimBeforePagesButton_, &QPushButton::clicked, this, [this]() { trimPreviousFumenPages(); });
         connect(trimPagesButton_, &QPushButton::clicked, this, [this]() { trimFollowingFumenPages(); });
         connect(outputCodeButton, &QPushButton::clicked, this, [this]() { updateFumenCodeFromPages(); });
 
@@ -1068,6 +1071,9 @@ private:
         if (nextPageButton_) {
             nextPageButton_->setEnabled(currentFumenPage_ + 1 < static_cast<int>(fumenPages_.size()));
         }
+        if (trimBeforePagesButton_) {
+            trimBeforePagesButton_->setEnabled(currentFumenPage_ > 0);
+        }
         if (trimPagesButton_) {
             trimPagesButton_->setEnabled(currentFumenPage_ + 1 < static_cast<int>(fumenPages_.size()));
         }
@@ -1183,6 +1189,26 @@ private:
         fumenPages_.erase(fumenPages_.begin() + currentFumenPage_ + 1, fumenPages_.end());
         fumenOperations_.erase(fumenOperations_.begin() + currentFumenPage_ + 1, fumenOperations_.end());
         updatePageControls();
+        updateFumenCodeFromPages();
+    }
+
+    void trimPreviousFumenPages() {
+        ensureFumenState();
+        syncCurrentPageFromBoard();
+        if (currentFumenPage_ <= 0) {
+            return;
+        }
+        fumenPages_.erase(fumenPages_.begin(), fumenPages_.begin() + currentFumenPage_);
+        fumenOperations_.erase(fumenOperations_.begin(), fumenOperations_.begin() + currentFumenPage_);
+        currentFumenPage_ = 0;
+        currentOperation_ = fumenOperations_[currentFumenPage_];
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(currentOperation_.type > 0);
+            updatingFumenControls_ = false;
+        }
+        updateMinoControls();
+        updateBoardFromFumenState();
         updateFumenCodeFromPages();
     }
 
@@ -1611,6 +1637,7 @@ private:
     QPushButton *prevPageButton_ = nullptr;
     QPushButton *nextPageButton_ = nullptr;
     QPushButton *addPageButton_ = nullptr;
+    QPushButton *trimBeforePagesButton_ = nullptr;
     QPushButton *trimPagesButton_ = nullptr;
     QPlainTextEdit *fumenEdit_ = nullptr;
     QPlainTextEdit *generatedField_ = nullptr;
