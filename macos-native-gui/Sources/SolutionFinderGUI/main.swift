@@ -5225,23 +5225,23 @@ struct FumenEditorPane: View {
                                 } label: {
                                     Label("Add", systemImage: "plus")
                                 }
-                                HStack(spacing: 8) {
-                                    Button(role: .destructive) {
-                                        model.deletePreviousFumenPages()
-                                        commitAction()
-                                    } label: {
-                                        Label("Trim Before", systemImage: "scissors")
-                                    }
-                                    .disabled(model.currentFumenPage == 0)
-
-                                    Button(role: .destructive) {
-                                        model.deleteFollowingFumenPages()
-                                        commitAction()
-                                    } label: {
-                                        Label("Trim After", systemImage: "scissors")
-                                    }
-                                    .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
+                                Button(role: .destructive) {
+                                    model.deletePreviousFumenPages()
+                                    commitAction()
+                                } label: {
+                                    Label("Trim Before", systemImage: "scissors")
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                 }
+                                .disabled(model.currentFumenPage == 0)
+
+                                Button(role: .destructive) {
+                                    model.deleteFollowingFumenPages()
+                                    commitAction()
+                                } label: {
+                                    Label("Trim After", systemImage: "scissors")
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
                             }
                             TextField("Comment", text: $model.fumenComment)
                                 .textFieldStyle(.roundedBorder)
