@@ -188,10 +188,6 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
     if (prefix >= 0) {
         code = code.mid(prefix + 5);
     }
-    const int query = code.indexOf('?');
-    if (query >= 0) {
-        code = code.left(query);
-    }
     code.remove(QRegularExpression("[^A-Za-z0-9+/]"));
     if (code.isEmpty()) {
         return std::nullopt;
@@ -282,8 +278,8 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
             }
         }
 
-        for (int index = 230; index < kFumenBlocks; ++index) {
-            pageField[index] = 0;
+        for (int index = 0; index < kFumenBlocks; ++index) {
+            pageField[index] = qBound(0, pageField[index], 8);
         }
         decoded.pages.push_back(pageField);
         decoded.operations.push_back(operation);
@@ -1006,6 +1002,23 @@ private:
         updateBoardFromFumenState();
     }
 
+    void resetToEmptyFumen() {
+        std::array<int, kFumenBlocks> blank{};
+        blank.fill(0);
+        fumenPages_ = {blank};
+        fumenOperations_ = {FumenOperation()};
+        currentFumenPage_ = 0;
+        currentOperation_ = FumenOperation();
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(false);
+            updatingFumenControls_ = false;
+        }
+        updateMinoControls();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
     void updateBoardFromFumenState() {
         ensureFumenState();
         if (board_) {
@@ -1342,6 +1355,25 @@ private:
         openerVariationBox_->blockSignals(false);
         openerGroupBox_->blockSignals(false);
         loadingOpeners_ = false;
+        selectEmptyBoardPreset();
+    }
+
+    void selectEmptyBoardPreset() {
+        const int groupIndex = openerGroupBox_->findData("Empty board");
+        if (groupIndex < 0) {
+            return;
+        }
+        openerGroupBox_->blockSignals(true);
+        openerGroupBox_->setCurrentIndex(groupIndex);
+        openerGroupBox_->blockSignals(false);
+        populateVariations();
+        const int variationIndex = openerVariationBox_->findData("empty");
+        if (variationIndex >= 0) {
+            openerVariationBox_->blockSignals(true);
+            openerVariationBox_->setCurrentIndex(variationIndex);
+            openerVariationBox_->blockSignals(false);
+            loadSelectedOpener();
+        }
     }
 
     void populateVariations() {
@@ -1379,7 +1411,7 @@ private:
                 fumenEdit_->setPlainText(opener.code);
                 updatingFumenEdit_ = false;
                 if (opener.code.isEmpty()) {
-                    board_->clearBoard();
+                    resetToEmptyFumen();
                     outputEdit_->appendPlainText("Loaded opener: " + opener.openerName + " - " + opener.variationName);
                     return;
                 }
