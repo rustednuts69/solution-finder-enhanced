@@ -24,7 +24,9 @@
 #include <QRegularExpression>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QStackedWidget>
 #include <QSysInfo>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -46,6 +48,11 @@ struct Opener {
     QString openerName;
     QString variationName;
     QString code;
+};
+
+struct DecodedFumen {
+    std::array<int, kColumns * kRows> cells{};
+    int pages = 0;
 };
 
 QColor cellColor(int value) {
@@ -98,6 +105,178 @@ QString appDataDir() {
     return base;
 }
 
+std::optional<DecodedFumen> decodeFumenV115(QString code) {
+    code = code.trimmed();
+    const int prefix = code.indexOf("v115@");
+    if (prefix >= 0) {
+        code = code.mid(prefix + 5);
+    }
+    const int query = code.indexOf('?');
+    if (query >= 0) {
+        code = code.left(query);
+    }
+    code.remove(QRegularExpression("[^A-Za-z0-9+/]"));
+    if (code.isEmpty()) {
+        return std::nullopt;
+    }
+
+    const QString table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::vector<int> enc;
+    enc.reserve(code.size() + 16);
+    for (QChar ch : code) {
+        const int value = table.indexOf(ch);
+        if (value >= 0) {
+            enc.push_back(value);
+        }
+    }
+    if (enc.empty()) {
+        return std::nullopt;
+    }
+
+    constexpr int kFumenRows = 24;
+    constexpr int kFumenBlocks = kColumns * kFumenRows;
+    const int pieceOffsets[] = {
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,1,1,1,2,1,3,1,1,0,1,1,1,2,1,3,0,1,1,1,2,1,3,1,1,0,1,1,1,2,1,3,
+        0,1,1,1,2,1,0,2,1,0,1,1,1,2,2,2,2,0,0,1,1,1,2,1,0,0,1,0,1,1,1,2,
+        1,1,2,1,1,2,2,2,1,1,2,1,1,2,2,2,1,1,2,1,1,2,2,2,1,1,2,1,1,2,2,2,
+        0,1,1,1,1,2,2,2,2,0,1,1,2,1,1,2,0,1,1,1,1,2,2,2,2,0,1,1,2,1,1,2,
+        0,1,1,1,2,1,1,2,1,0,1,1,2,1,1,2,1,0,0,1,1,1,2,1,1,0,0,1,1,1,1,2,
+        0,1,1,1,2,1,2,2,1,0,2,0,1,1,1,2,0,0,0,1,1,1,2,1,1,0,1,1,0,2,1,2,
+        1,1,2,1,0,2,1,2,0,0,0,1,1,1,1,2,1,1,2,1,0,2,1,2,0,0,0,1,1,1,1,2
+    };
+
+    std::array<int, kFumenBlocks> field{};
+    field.fill(0);
+    int cursor = 0;
+    int repeatCount = 0;
+    int pages = 0;
+
+    auto take = [&]() -> int {
+        if (cursor >= static_cast<int>(enc.size())) {
+            return 0;
+        }
+        return enc[cursor++];
+    };
+
+    while (cursor < static_cast<int>(enc.size()) && pages < 2000) {
+        if (repeatCount < 1) {
+            int j = 0;
+            while (j < kFumenBlocks) {
+                int tmp = take();
+                tmp += take() * 64;
+                int run = tmp % kFumenBlocks;
+                tmp /= kFumenBlocks;
+                int diff = tmp % 17;
+                for (int i = 0; i <= run && j < kFumenBlocks; ++i) {
+                    field[j++] += diff - 8;
+                }
+                if (diff * kFumenBlocks + run == 9 * kFumenBlocks - 1) {
+                    repeatCount = take();
+                }
+            }
+        } else {
+            repeatCount--;
+        }
+
+        int tmp = take();
+        tmp += take() * 64;
+        tmp += take() * 4096;
+        const int piece = tmp % 8;
+        tmp /= 8;
+        const int rotation = tmp % 4;
+        tmp /= 4;
+        const int position = tmp % kFumenBlocks;
+        tmp /= kFumenBlocks;
+        const bool rise = (tmp % 2) != 0;
+        tmp /= 2;
+        const bool mirror = (tmp % 2) != 0;
+        tmp /= 2;
+        tmp /= 2; // color mode
+        const bool hasComment = (tmp % 2) != 0;
+        tmp /= 2;
+        const bool noLock = (tmp % 2) != 0;
+
+        if (hasComment) {
+            int commentHeader = take();
+            commentHeader += take() * 64;
+            const int length = commentHeader % 4096;
+            for (int i = 0; i < length; i += 4) {
+                take();
+                take();
+                take();
+                take();
+                take();
+            }
+        }
+
+        if (!noLock) {
+            if (piece > 0) {
+                for (int block = 0; block < 4; ++block) {
+                    const int base = piece * 32 + rotation * 8 + block * 2;
+                    const int x = pieceOffsets[base];
+                    const int y = pieceOffsets[base + 1];
+                    const int index = position + y * kColumns + x - 11;
+                    if (0 <= index && index < kFumenBlocks) {
+                        field[index] = piece;
+                    }
+                }
+            }
+
+            int writeRow = kFumenRows - 2;
+            for (int readRow = kFumenRows - 2; readRow >= 0; --readRow) {
+                bool full = true;
+                for (int col = 0; col < kColumns; ++col) {
+                    if (field[readRow * kColumns + col] <= 0) {
+                        full = false;
+                        break;
+                    }
+                }
+                if (!full) {
+                    for (int col = 0; col < kColumns; ++col) {
+                        field[writeRow * kColumns + col] = field[readRow * kColumns + col];
+                    }
+                    --writeRow;
+                }
+            }
+            for (; writeRow >= 0; --writeRow) {
+                for (int col = 0; col < kColumns; ++col) {
+                    field[writeRow * kColumns + col] = 0;
+                }
+            }
+
+            if (rise) {
+                for (int i = 0; i < kFumenBlocks - kColumns; ++i) {
+                    field[i] = field[i + kColumns];
+                }
+                for (int i = kFumenBlocks - kColumns; i < kFumenBlocks; ++i) {
+                    field[i] = 0;
+                }
+            }
+            if (mirror) {
+                for (int row = 0; row < kFumenRows - 1; ++row) {
+                    for (int col = 0; col < kColumns / 2; ++col) {
+                        std::swap(field[row * kColumns + col], field[row * kColumns + (kColumns - 1 - col)]);
+                    }
+                }
+            }
+        }
+        ++pages;
+    }
+
+    DecodedFumen decoded;
+    decoded.cells.fill(0);
+    decoded.pages = pages;
+    const int topRow = 3;
+    for (int row = 0; row < kRows; ++row) {
+        for (int col = 0; col < kColumns; ++col) {
+            int value = field[(topRow + row) * kColumns + col];
+            decoded.cells[row * kColumns + col] = qBound(0, value, 8);
+        }
+    }
+    return decoded;
+}
+
 class BoardWidget : public QWidget {
 public:
     explicit BoardWidget(QWidget *parent = nullptr)
@@ -118,6 +297,14 @@ public:
 
     void clearBoard() {
         cells_.fill(0);
+        update();
+        if (onChanged) {
+            onChanged();
+        }
+    }
+
+    void setCells(const std::array<int, kColumns * kRows> &cells) {
+        cells_ = cells;
         update();
         if (onChanged) {
             onChanged();
@@ -156,27 +343,28 @@ protected:
         painter.setBrush(QColor("#000000"));
         painter.drawRoundedRect(board.adjusted(0, 0, -1, -1), 7, 7);
 
-        const double cell = static_cast<double>(board.width()) / kColumns;
+        const int cell = board.width() / kColumns;
         for (int row = 0; row < kRows; ++row) {
             for (int col = 0; col < kColumns; ++col) {
-                QRectF r(board.left() + col * cell,
-                         board.top() + row * cell,
-                         cell,
-                         cell);
+                QRect r(board.left() + col * cell,
+                        board.top() + row * cell,
+                        cell,
+                        cell);
                 const int value = cells_[row * kColumns + col];
-                QRectF fillRect = r.adjusted(1.0, 1.0, -1.0, -1.0);
+                QRect fillRect = r.adjusted(1, 1, -1, -1);
                 if (value == 0) {
                     painter.fillRect(fillRect, QColor("#050505"));
-                    painter.setPen(QPen(QColor("#1a1a1a"), 1));
+                    painter.setPen(QPen(QColor("#242424"), 1));
                     painter.drawRect(fillRect);
                 } else {
                     QColor fill = cellColor(value);
-                    painter.fillRect(fillRect, fill);
-                    painter.setPen(QPen(fill.lighter(128), 1));
-                    painter.drawLine(fillRect.topLeft(), fillRect.topRight());
-                    painter.drawLine(fillRect.topLeft(), fillRect.bottomLeft());
+                    painter.fillRect(r.adjusted(1, 1, -1, -1), fill);
+                    painter.fillRect(r.adjusted(3, 3, -3, -3), fill.lighter(105));
+                    painter.setPen(QPen(fill.lighter(135), 2));
+                    painter.drawLine(r.left() + 2, r.top() + 2, r.right() - 2, r.top() + 2);
+                    painter.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
                     painter.setPen(QPen(QColor("#050505"), 1));
-                    painter.drawRect(fillRect);
+                    painter.drawRect(r.adjusted(1, 1, -1, -1));
                 }
             }
         }
@@ -213,6 +401,8 @@ private:
             boardHeight = height() - 8;
             boardWidth = boardHeight / 2;
         }
+        boardWidth = qMax(10, (boardWidth / kColumns) * kColumns);
+        boardHeight = boardWidth * 2;
         return QRect((width() - boardWidth) / 2, (height() - boardHeight) / 2, boardWidth, boardHeight);
     }
 
@@ -396,16 +586,21 @@ private:
         titleRow->addLayout(titleBlock);
         titleRow->addStretch(1);
 
-        auto *sectionTabs = new QTabWidget(panel);
+        auto *sectionTabs = new QTabBar(panel);
         sectionTabs->setObjectName("sectionTabs");
-        sectionTabs->setMaximumHeight(28);
-        sectionTabs->addTab(new QWidget(sectionTabs), "Editor");
-        sectionTabs->addTab(new QWidget(sectionTabs), "Play");
-        sectionTabs->addTab(new QWidget(sectionTabs), "Output");
-        sectionTabs->addTab(new QWidget(sectionTabs), "Preview");
-        sectionTabs->setEnabled(false);
+        sectionTabs->addTab("Editor");
+        sectionTabs->addTab("Play");
+        sectionTabs->addTab("Output");
+        sectionTabs->addTab("Preview");
+        sectionTabs->setExpanding(false);
         titleRow->addWidget(sectionTabs);
         layout->addLayout(titleRow);
+
+        auto *stack = new QStackedWidget(panel);
+        auto *editorPage = new QWidget(stack);
+        auto *editorLayout = new QVBoxLayout(editorPage);
+        editorLayout->setContentsMargins(0, 0, 0, 0);
+        editorLayout->setSpacing(8);
 
         auto *toolbar = new QHBoxLayout();
         auto *clearButton = new QPushButton("Clear Board", panel);
@@ -413,30 +608,53 @@ private:
         toolbar->addWidget(clearButton);
         toolbar->addWidget(mirrorButton);
         toolbar->addStretch(1);
-        layout->addLayout(toolbar);
+        editorLayout->addLayout(toolbar);
 
         board_ = new BoardWidget(panel);
         board_->onChanged = [this]() {
             updateGeneratedField();
         };
-        layout->addWidget(board_, 1);
+        editorLayout->addWidget(board_, 1);
 
         auto *fumenLabel = new QLabel("Fumen Code", panel);
         fumenEdit_ = new QPlainTextEdit(panel);
-        fumenEdit_->setPlaceholderText("Paste or select a fumen code. Decoding will be ported next.");
+        fumenEdit_->setPlaceholderText("Paste or select a fumen code. Presets decode directly onto the board.");
         fumenEdit_->setMaximumHeight(76);
-        layout->addWidget(fumenLabel);
-        layout->addWidget(fumenEdit_);
+        editorLayout->addWidget(fumenLabel);
+        editorLayout->addWidget(fumenEdit_);
 
         generatedField_ = new QPlainTextEdit(panel);
         generatedField_->setReadOnly(true);
         generatedField_->setMaximumHeight(120);
-        layout->addWidget(new QLabel("Generated sfinder Field", panel));
-        layout->addWidget(generatedField_);
+        editorLayout->addWidget(new QLabel("Generated sfinder Field", panel));
+        editorLayout->addWidget(generatedField_);
+
+        stack->addWidget(editorPage);
+        stack->addWidget(makePlaceholderPage("Play mode", "Playable mode will be ported after the editor and solver panes are stable.", stack));
+        stack->addWidget(makePlaceholderPage("Output preview", "Generated HTML output will be shown here once the Qt preview pane is ported.", stack));
+        stack->addWidget(makePlaceholderPage("Fumen preview", "Clickable solution fumen previews will be restored in this pane.", stack));
+        layout->addWidget(stack, 1);
+
+        connect(sectionTabs, &QTabBar::currentChanged, stack, &QStackedWidget::setCurrentIndex);
 
         connect(clearButton, &QPushButton::clicked, board_, &BoardWidget::clearBoard);
         connect(mirrorButton, &QPushButton::clicked, board_, &BoardWidget::mirror);
         return panel;
+    }
+
+    QWidget *makePlaceholderPage(const QString &title, const QString &body, QWidget *parent) {
+        auto *page = new QWidget(parent);
+        auto *layout = new QVBoxLayout(page);
+        layout->setContentsMargins(24, 24, 24, 24);
+        auto *titleLabel = new QLabel(title, page);
+        titleLabel->setObjectName("paneTitle");
+        auto *bodyLabel = new QLabel(body, page);
+        bodyLabel->setObjectName("paneSubtitle");
+        bodyLabel->setWordWrap(true);
+        layout->addWidget(titleLabel);
+        layout->addWidget(bodyLabel);
+        layout->addStretch(1);
+        return page;
     }
 
     QWidget *buildOutputPanel() {
@@ -529,7 +747,21 @@ private:
         for (const Opener &opener : openers_) {
             if (opener.id == id) {
                 fumenEdit_->setPlainText(opener.code);
-                outputEdit_->appendPlainText("Loaded opener: " + opener.openerName + " - " + opener.variationName);
+                if (opener.code.isEmpty()) {
+                    board_->clearBoard();
+                    outputEdit_->appendPlainText("Loaded opener: " + opener.openerName + " - " + opener.variationName);
+                    return;
+                }
+                const auto decoded = decodeFumenV115(opener.code);
+                if (decoded.has_value()) {
+                    board_->setCells(decoded->cells);
+                    outputEdit_->appendPlainText(QString("Loaded opener: %1 - %2 (%3 page%4)")
+                                                     .arg(opener.openerName, opener.variationName)
+                                                     .arg(decoded->pages)
+                                                     .arg(decoded->pages == 1 ? "" : "s"));
+                } else {
+                    outputEdit_->appendPlainText("Could not decode opener fumen: " + opener.openerName + " - " + opener.variationName);
+                }
                 return;
             }
         }
