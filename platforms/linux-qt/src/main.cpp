@@ -285,6 +285,16 @@ public:
         setMinimumSize(260, 520);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setMouseTracking(true);
+        setObjectName("boardWidget");
+        setStyleSheet("QWidget#boardWidget { background-color: #000000; border: 3px solid #050505; border-radius: 7px; }");
+        for (int i = 0; i < kColumns * kRows; ++i) {
+            auto *cell = new QLabel(this);
+            cell->setAttribute(Qt::WA_TransparentForMouseEvents);
+            cell->setAlignment(Qt::AlignCenter);
+            cell->setAutoFillBackground(true);
+            cellWidgets_[i] = cell;
+        }
+        refreshAllCells();
     }
 
     QSize sizeHint() const override {
@@ -297,7 +307,7 @@ public:
 
     void clearBoard() {
         cells_.fill(0);
-        update();
+        refreshAllCells();
         if (onChanged) {
             onChanged();
         }
@@ -305,7 +315,7 @@ public:
 
     void setCells(const std::array<int, kColumns * kRows> &cells) {
         cells_ = cells;
-        update();
+        refreshAllCells();
         if (onChanged) {
             onChanged();
         }
@@ -324,7 +334,7 @@ public:
             }
         }
         cells_ = next;
-        update();
+        refreshAllCells();
         if (onChanged) {
             onChanged();
         }
@@ -333,41 +343,8 @@ public:
     std::function<void()> onChanged;
 
 protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.fillRect(rect(), QColor("#303030"));
-
-        const QRect board = boardRect();
-        painter.setPen(QPen(QColor("#252525"), 2));
-        painter.setBrush(QColor("#000000"));
-        painter.drawRoundedRect(board.adjusted(0, 0, -1, -1), 7, 7);
-
-        const int cell = board.width() / kColumns;
-        for (int row = 0; row < kRows; ++row) {
-            for (int col = 0; col < kColumns; ++col) {
-                QRect r(board.left() + col * cell,
-                        board.top() + row * cell,
-                        cell,
-                        cell);
-                const int value = cells_[row * kColumns + col];
-                QRect fillRect = r.adjusted(1, 1, -1, -1);
-                if (value == 0) {
-                    painter.fillRect(fillRect, QColor("#050505"));
-                    painter.setPen(QPen(QColor("#242424"), 1));
-                    painter.drawRect(fillRect);
-                } else {
-                    QColor fill = cellColor(value);
-                    painter.fillRect(r.adjusted(1, 1, -1, -1), fill);
-                    painter.fillRect(r.adjusted(3, 3, -3, -3), fill.lighter(105));
-                    painter.setPen(QPen(fill.lighter(135), 2));
-                    painter.drawLine(r.left() + 2, r.top() + 2, r.right() - 2, r.top() + 2);
-                    painter.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
-                    painter.setPen(QPen(QColor("#050505"), 1));
-                    painter.drawRect(r.adjusted(1, 1, -1, -1));
-                }
-            }
-        }
+    void resizeEvent(QResizeEvent *) override {
+        layoutCells();
     }
 
     void mousePressEvent(QMouseEvent *event) override {
@@ -395,15 +372,29 @@ private:
     QRect boardRect() const {
         int side = qMin(width(), height() / 2);
         side = qMax(side, 240);
-        int boardWidth = qMin(width() - 8, side);
+        int boardWidth = qMin(width() - 12, side);
         int boardHeight = boardWidth * 2;
-        if (boardHeight > height() - 8) {
-            boardHeight = height() - 8;
+        if (boardHeight > height() - 12) {
+            boardHeight = height() - 12;
             boardWidth = boardHeight / 2;
         }
         boardWidth = qMax(10, (boardWidth / kColumns) * kColumns);
         boardHeight = boardWidth * 2;
         return QRect((width() - boardWidth) / 2, (height() - boardHeight) / 2, boardWidth, boardHeight);
+    }
+
+    void layoutCells() {
+        const QRect board = boardRect();
+        const int cell = qMax(1, board.width() / kColumns);
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const int index = row * kColumns + col;
+                cellWidgets_[index]->setGeometry(board.left() + col * cell,
+                                                 board.top() + row * cell,
+                                                 cell,
+                                                 cell);
+            }
+        }
     }
 
     void paintCellAt(const QPoint &point) {
@@ -424,7 +415,7 @@ private:
             return;
         }
         cells_[index] = nextValue;
-        update();
+        refreshCell(index);
         if (onChanged) {
             onChanged();
         }
@@ -441,6 +432,35 @@ private:
         return cells_[row * kColumns + col];
     }
 
+    void refreshAllCells() {
+        for (int i = 0; i < kColumns * kRows; ++i) {
+            refreshCell(i);
+        }
+        layoutCells();
+    }
+
+    void refreshCell(int index) {
+        QLabel *cell = cellWidgets_[index];
+        const int value = cells_[index];
+        const QColor color = cellColor(value);
+        if (value == 0) {
+            cell->setText("");
+            cell->setStyleSheet(
+                "background-color: #050505;"
+                "border: 1px solid #202020;"
+            );
+        } else {
+            cell->setText("");
+            cell->setStyleSheet(QString(
+                "background-color: %1;"
+                "border-top: 2px solid %2;"
+                "border-left: 2px solid %2;"
+                "border-right: 2px solid #050505;"
+                "border-bottom: 2px solid #050505;")
+                                    .arg(color.name(), color.lighter(135).name()));
+        }
+    }
+
     int mirrorColor(int value) const {
         if (value == 2) return 6;
         if (value == 6) return 2;
@@ -450,6 +470,7 @@ private:
     }
 
     std::array<int, kColumns * kRows> cells_{};
+    std::array<QLabel *, kColumns * kRows> cellWidgets_{};
     int paintValue_ = 8;
     int lastPainted_ = -1;
     bool painting_ = false;
@@ -538,8 +559,6 @@ private:
         openerVariationBox_ = new QComboBox(openerGroup);
         openerLayout->addRow("Base", openerGroupBox_);
         openerLayout->addRow("Variation", openerVariationBox_);
-        auto *restoreButton = new QPushButton("Load Selected Opener", openerGroup);
-        openerLayout->addRow("", restoreButton);
         layout->addWidget(openerGroup);
 
         auto *actions = new QHBoxLayout();
@@ -555,7 +574,7 @@ private:
         connect(openerGroupBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             populateVariations();
         });
-        connect(restoreButton, &QPushButton::clicked, this, [this]() {
+        connect(openerVariationBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             loadSelectedOpener();
         });
         connect(runButton_, &QPushButton::clicked, this, [this]() {
