@@ -16,6 +16,7 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
@@ -28,6 +29,7 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QVBoxLayout>
+#include <QStyleFactory>
 
 #include <array>
 #include <functional>
@@ -48,15 +50,15 @@ struct Opener {
 
 QColor cellColor(int value) {
     switch (value) {
-    case 1: return QColor("#00d5dd");
-    case 2: return QColor("#f6b100");
-    case 3: return QColor("#f2e900");
-    case 4: return QColor("#ed1c24");
-    case 5: return QColor("#c20fd8");
-    case 6: return QColor("#1739df");
-    case 7: return QColor("#18c92f");
-    case 8: return QColor("#9c9ca1");
-    default: return QColor("#050505");
+    case 1: return QColor("#18c9d2");
+    case 2: return QColor("#f0aa18");
+    case 3: return QColor("#efe700");
+    case 4: return QColor("#e81c25");
+    case 5: return QColor("#bb13d4");
+    case 6: return QColor("#2044df");
+    case 7: return QColor("#18c93f");
+    case 8: return QColor("#9f9fa5");
+    default: return QColor("#090909");
     }
 }
 
@@ -147,30 +149,45 @@ protected:
     void paintEvent(QPaintEvent *) override {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.fillRect(rect(), QColor("#111111"));
+        painter.fillRect(rect(), QColor("#303030"));
 
         const QRect board = boardRect();
-        painter.setPen(QPen(QColor("#333333"), 1));
-        painter.setBrush(QColor("#020202"));
-        painter.drawRoundedRect(board.adjusted(0, 0, -1, -1), 8, 8);
+        painter.setPen(QPen(QColor("#252525"), 2));
+        painter.setBrush(QColor("#000000"));
+        painter.drawRoundedRect(board.adjusted(0, 0, -1, -1), 7, 7);
 
         const double cell = static_cast<double>(board.width()) / kColumns;
         for (int row = 0; row < kRows; ++row) {
             for (int col = 0; col < kColumns; ++col) {
-                QRectF r(board.left() + col * cell + 1.0,
-                         board.top() + row * cell + 1.0,
-                         cell - 2.0,
-                         cell - 2.0);
+                QRectF r(board.left() + col * cell,
+                         board.top() + row * cell,
+                         cell,
+                         cell);
                 const int value = cells_[row * kColumns + col];
-                painter.fillRect(r, cellColor(value));
-                painter.setPen(value == 0 ? QColor("#151515") : QColor("#050505"));
-                painter.drawRect(r);
+                QRectF fillRect = r.adjusted(1.0, 1.0, -1.0, -1.0);
+                if (value == 0) {
+                    painter.fillRect(fillRect, QColor("#050505"));
+                    painter.setPen(QPen(QColor("#1a1a1a"), 1));
+                    painter.drawRect(fillRect);
+                } else {
+                    QColor fill = cellColor(value);
+                    painter.fillRect(fillRect, fill);
+                    painter.setPen(QPen(fill.lighter(128), 1));
+                    painter.drawLine(fillRect.topLeft(), fillRect.topRight());
+                    painter.drawLine(fillRect.topLeft(), fillRect.bottomLeft());
+                    painter.setPen(QPen(QColor("#050505"), 1));
+                    painter.drawRect(fillRect);
+                }
             }
         }
     }
 
     void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() != Qt::LeftButton) {
+            return;
+        }
         painting_ = true;
+        eraseStroke_ = cellValueAt(event->position().toPoint()) == paintValue_;
         paintCellAt(event->position().toPoint());
     }
 
@@ -182,6 +199,7 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent *) override {
         painting_ = false;
+        eraseStroke_ = false;
         lastPainted_ = -1;
     }
 
@@ -211,11 +229,26 @@ private:
             return;
         }
         lastPainted_ = index;
-        cells_[index] = cells_[index] == paintValue_ ? 0 : paintValue_;
+        const int nextValue = eraseStroke_ ? 0 : paintValue_;
+        if (cells_[index] == nextValue) {
+            return;
+        }
+        cells_[index] = nextValue;
         update();
         if (onChanged) {
             onChanged();
         }
+    }
+
+    int cellValueAt(const QPoint &point) const {
+        const QRect board = boardRect();
+        if (!board.contains(point)) {
+            return -1;
+        }
+        const double cell = static_cast<double>(board.width()) / kColumns;
+        const int col = qBound(0, static_cast<int>((point.x() - board.left()) / cell), kColumns - 1);
+        const int row = qBound(0, static_cast<int>((point.y() - board.top()) / cell), kRows - 1);
+        return cells_[row * kColumns + col];
     }
 
     int mirrorColor(int value) const {
@@ -230,6 +263,7 @@ private:
     int paintValue_ = 8;
     int lastPainted_ = -1;
     bool painting_ = false;
+    bool eraseStroke_ = false;
 };
 
 class MainWindow : public QMainWindow {
@@ -248,11 +282,11 @@ private:
     void buildUi() {
         auto *root = new QWidget(this);
         auto *mainLayout = new QHBoxLayout(root);
-        mainLayout->setContentsMargins(12, 12, 12, 12);
-        mainLayout->setSpacing(12);
+        mainLayout->setContentsMargins(14, 14, 14, 14);
+        mainLayout->setSpacing(14);
 
         mainLayout->addWidget(buildSettingsPanel(), 0);
-        mainLayout->addWidget(buildBoardPanel(), 1);
+        mainLayout->addWidget(buildBoardPanel(), 2);
         mainLayout->addWidget(buildOutputPanel(), 1);
 
         setCentralWidget(root);
@@ -261,8 +295,10 @@ private:
     QWidget *buildSettingsPanel() {
         auto *panel = new QWidget(this);
         panel->setMinimumWidth(300);
-        panel->setMaximumWidth(380);
+        panel->setMaximumWidth(360);
         auto *layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(12);
 
         auto *commandGroup = new QGroupBox("Search Settings", panel);
         auto *form = new QFormLayout(commandGroup);
@@ -293,8 +329,10 @@ private:
             auto *button = new QPushButton(cellName(value), paintGroup);
             button->setCheckable(true);
             button->setMinimumHeight(34);
-            button->setStyleSheet(QString("QPushButton { background: %1; color: %2; }")
-                                      .arg(cellColor(value).name(), value == 0 ? "#dddddd" : "#ffffff"));
+            button->setStyleSheet(QString(
+                "QPushButton { background: %1; color: %2; border: 1px solid #242424; border-radius: 5px; font-weight: 650; }"
+                "QPushButton:checked { border: 3px solid #0a84ff; }")
+                                      .arg(cellColor(value).name(), value == 0 ? "#d8d8d8" : "#ffffff"));
             paintButtons_.push_back(button);
             paintLayout->addWidget(button, column / 3, column % 3);
             connect(button, &QPushButton::clicked, this, [this, value]() {
@@ -344,6 +382,31 @@ private:
     QWidget *buildBoardPanel() {
         auto *panel = new QWidget(this);
         auto *layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        auto *titleRow = new QHBoxLayout();
+        auto *titleBlock = new QVBoxLayout();
+        auto *title = new QLabel("Fumen Editor", panel);
+        title->setObjectName("paneTitle");
+        auto *subtitle = new QLabel("Native Qt board editor with sfinder command output.", panel);
+        subtitle->setObjectName("paneSubtitle");
+        titleBlock->addWidget(title);
+        titleBlock->addWidget(subtitle);
+        titleRow->addLayout(titleBlock);
+        titleRow->addStretch(1);
+
+        auto *sectionTabs = new QTabWidget(panel);
+        sectionTabs->setObjectName("sectionTabs");
+        sectionTabs->setMaximumHeight(28);
+        sectionTabs->addTab(new QWidget(sectionTabs), "Editor");
+        sectionTabs->addTab(new QWidget(sectionTabs), "Play");
+        sectionTabs->addTab(new QWidget(sectionTabs), "Output");
+        sectionTabs->addTab(new QWidget(sectionTabs), "Preview");
+        sectionTabs->setEnabled(false);
+        titleRow->addWidget(sectionTabs);
+        layout->addLayout(titleRow);
+
         auto *toolbar = new QHBoxLayout();
         auto *clearButton = new QPushButton("Clear Board", panel);
         auto *mirrorButton = new QPushButton("Mirror", panel);
@@ -361,7 +424,7 @@ private:
         auto *fumenLabel = new QLabel("Fumen Code", panel);
         fumenEdit_ = new QPlainTextEdit(panel);
         fumenEdit_->setPlaceholderText("Paste or select a fumen code. Decoding will be ported next.");
-        fumenEdit_->setMaximumHeight(82);
+        fumenEdit_->setMaximumHeight(76);
         layout->addWidget(fumenLabel);
         layout->addWidget(fumenEdit_);
 
@@ -378,9 +441,10 @@ private:
 
     QWidget *buildOutputPanel() {
         auto *tabs = new QTabWidget(this);
+        tabs->setMinimumWidth(320);
         outputEdit_ = new QPlainTextEdit(tabs);
         outputEdit_->setReadOnly(true);
-        outputEdit_->setStyleSheet("font-family: 'JetBrains Mono', 'SF Mono', monospace; font-size: 13px;");
+        outputEdit_->setStyleSheet("font-family: 'Menlo', 'SF Mono', 'DejaVu Sans Mono', monospace; font-size: 13px;");
         tabs->addTab(outputEdit_, "Command Output");
 
         auto *tips = new QPlainTextEdit(tabs);
@@ -655,12 +719,119 @@ private:
     QProcess *process_ = nullptr;
 };
 
+void applyAppTheme(QApplication &app) {
+    app.setStyle(QStyleFactory::create("Fusion"));
+
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor("#303030"));
+    palette.setColor(QPalette::WindowText, QColor("#f0f0f0"));
+    palette.setColor(QPalette::Base, QColor("#1f1f1f"));
+    palette.setColor(QPalette::AlternateBase, QColor("#282828"));
+    palette.setColor(QPalette::ToolTipBase, QColor("#f0f0f0"));
+    palette.setColor(QPalette::ToolTipText, QColor("#202020"));
+    palette.setColor(QPalette::Text, QColor("#f0f0f0"));
+    palette.setColor(QPalette::Button, QColor("#666666"));
+    palette.setColor(QPalette::ButtonText, QColor("#f4f4f4"));
+    palette.setColor(QPalette::BrightText, QColor("#ffffff"));
+    palette.setColor(QPalette::Highlight, QColor("#0a84ff"));
+    palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    app.setPalette(palette);
+
+    app.setStyleSheet(R"(
+        QWidget {
+            background-color: #303030;
+            color: #eeeeee;
+            font-size: 13px;
+        }
+        QLabel#paneTitle {
+            font-size: 18px;
+            font-weight: 750;
+            color: #f2f2f2;
+        }
+        QLabel#paneSubtitle {
+            color: #b7b7b7;
+            font-size: 12px;
+        }
+        QGroupBox {
+            border: 1px solid #555555;
+            border-radius: 6px;
+            margin-top: 12px;
+            padding: 10px 8px 8px 8px;
+            font-weight: 650;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 4px;
+            color: #dddddd;
+        }
+        QPushButton {
+            background-color: #666666;
+            color: #f4f4f4;
+            border: 1px solid #707070;
+            border-radius: 6px;
+            padding: 5px 12px;
+            font-weight: 650;
+        }
+        QPushButton:hover {
+            background-color: #747474;
+        }
+        QPushButton:pressed {
+            background-color: #555555;
+        }
+        QPushButton:disabled {
+            color: #9a9a9a;
+            background-color: #484848;
+            border-color: #555555;
+        }
+        QComboBox, QSpinBox, QLineEdit, QPlainTextEdit {
+            background-color: #232323;
+            color: #f1f1f1;
+            border: 1px solid #555555;
+            border-radius: 5px;
+            padding: 4px 6px;
+            selection-background-color: #0a84ff;
+        }
+        QPlainTextEdit {
+            font-family: "Menlo", "SF Mono", "DejaVu Sans Mono", monospace;
+        }
+        QTabWidget::pane {
+            border: 1px solid #555555;
+            border-radius: 5px;
+            top: -1px;
+        }
+        QTabBar::tab {
+            background: #4f4f4f;
+            color: #eeeeee;
+            border: 1px solid #5f5f5f;
+            padding: 5px 18px;
+            min-width: 66px;
+        }
+        QTabBar::tab:selected {
+            background: #777777;
+            color: #ffffff;
+        }
+        QTabBar::tab:first {
+            border-top-left-radius: 5px;
+            border-bottom-left-radius: 5px;
+        }
+        QTabBar::tab:last {
+            border-top-right-radius: 5px;
+            border-bottom-right-radius: 5px;
+        }
+        QCheckBox {
+            spacing: 6px;
+        }
+    )");
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("Solution Finder Enhanced");
     QApplication::setOrganizationName("rustednuts69");
+    applyAppTheme(app);
 
     MainWindow window;
     window.show();
