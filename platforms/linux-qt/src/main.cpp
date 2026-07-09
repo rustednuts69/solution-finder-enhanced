@@ -1329,23 +1329,50 @@ private:
             }
         }
         groups.sort(Qt::CaseInsensitive);
+        loadingOpeners_ = true;
+        openerGroupBox_->blockSignals(true);
+        openerVariationBox_->blockSignals(true);
         openerGroupBox_->clear();
-        openerGroupBox_->addItems(groups);
-        populateVariations();
+        openerGroupBox_->addItem("Choose opener...", "");
+        for (const QString &group : groups) {
+            openerGroupBox_->addItem(group, group);
+        }
+        openerVariationBox_->clear();
+        openerVariationBox_->addItem("Choose variation...", "");
+        openerVariationBox_->blockSignals(false);
+        openerGroupBox_->blockSignals(false);
+        loadingOpeners_ = false;
     }
 
     void populateVariations() {
+        if (loadingOpeners_) {
+            return;
+        }
         const QString group = openerGroupBox_->currentText();
+        const QString groupId = openerGroupBox_->currentData().toString();
+        openerVariationBox_->blockSignals(true);
         openerVariationBox_->clear();
+        openerVariationBox_->addItem(groupId.isEmpty() ? "Choose variation..." : "Choose variation...", "");
+        if (groupId.isEmpty()) {
+            openerVariationBox_->blockSignals(false);
+            return;
+        }
         for (const Opener &opener : openers_) {
             if (opener.openerName == group) {
                 openerVariationBox_->addItem(opener.variationName, opener.id);
             }
         }
+        openerVariationBox_->blockSignals(false);
     }
 
     void loadSelectedOpener() {
+        if (loadingOpeners_) {
+            return;
+        }
         const QString id = openerVariationBox_->currentData().toString();
+        if (id.isEmpty()) {
+            return;
+        }
         for (const Opener &opener : openers_) {
             if (opener.id == id) {
                 updatingFumenEdit_ = true;
@@ -1565,6 +1592,7 @@ private:
     int currentFumenPage_ = 0;
     bool updatingFumenEdit_ = false;
     bool updatingFumenControls_ = false;
+    bool loadingOpeners_ = false;
     QProcess *process_ = nullptr;
 };
 
