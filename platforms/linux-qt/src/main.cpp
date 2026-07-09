@@ -149,6 +149,8 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
 
     std::array<int, kFumenBlocks> field{};
     field.fill(0);
+    std::array<int, kFumenBlocks> displayField{};
+    displayField.fill(0);
     int cursor = 0;
     int repeatCount = 0;
     int pages = 0;
@@ -180,6 +182,10 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
             repeatCount--;
         }
 
+        if (pages == 0) {
+            displayField = field;
+        }
+
         int tmp = take();
         tmp += take() * 64;
         tmp += take() * 4096;
@@ -208,6 +214,18 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
                 take();
                 take();
                 take();
+            }
+        }
+
+        if (pages == 0 && piece > 0) {
+            for (int block = 0; block < 4; ++block) {
+                const int base = piece * 32 + rotation * 8 + block * 2;
+                const int x = pieceOffsets[base];
+                const int y = pieceOffsets[base + 1];
+                const int index = position + y * kColumns + x - 11;
+                if (0 <= index && index < kFumenBlocks) {
+                    displayField[index] = piece;
+                }
             }
         }
 
@@ -271,7 +289,7 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
     const int topRow = 3;
     for (int row = 0; row < kRows; ++row) {
         for (int col = 0; col < kColumns; ++col) {
-            int value = field[(topRow + row) * kColumns + col];
+            int value = displayField[(topRow + row) * kColumns + col];
             decoded.cells[row * kColumns + col] = qBound(0, value, 8);
         }
     }
