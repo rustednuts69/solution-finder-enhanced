@@ -355,10 +355,14 @@ std::optional<std::array<int, kFumenBlocks>> fumenCellsFromBoardImage(const QIma
 std::optional<QImage> runScreenshotCommand(const QString &program,
                                            const QStringList &arguments,
                                            const QString &path,
-                                           QWidget *parent) {
+                                           QWidget *parent,
+                                           QString *errorMessage = nullptr) {
     QProcess process(parent);
     process.start(program, arguments);
     if (!process.waitForStarted(3000)) {
+        if (errorMessage) {
+            *errorMessage = "could not start";
+        }
         return std::nullopt;
     }
     while (!process.waitForFinished(100)) {
@@ -366,15 +370,46 @@ std::optional<QImage> runScreenshotCommand(const QString &program,
     }
     QFileInfo file(path);
     if (!file.exists() || file.size() <= 0) {
+        if (errorMessage) {
+            const QString stderrText = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+            *errorMessage = QString("exit %1%2")
+                                .arg(process.exitCode())
+                                .arg(stderrText.isEmpty() ? "" : ": " + stderrText);
+        }
         QFile::remove(path);
         return std::nullopt;
     }
     QImage image(path);
     QFile::remove(path);
     if (image.isNull()) {
+        if (errorMessage) {
+            *errorMessage = "screenshot file was not a readable image";
+        }
         return std::nullopt;
     }
     return image;
+}
+
+QString findProgram(const QString &name) {
+    const QString fromPath = QStandardPaths::findExecutable(name);
+    if (!fromPath.isEmpty()) {
+        return fromPath;
+    }
+    const QStringList dirs = {
+        "/usr/bin",
+        "/bin",
+        "/usr/local/bin",
+        "/snap/bin",
+        "/var/lib/flatpak/exports/bin",
+        QDir::homePath() + "/.local/bin"
+    };
+    for (const QString &dir : dirs) {
+        const QString candidate = QDir(dir).filePath(name);
+        if (QFileInfo(candidate).isExecutable()) {
+            return candidate;
+        }
+    }
+    return QString();
 }
 
 std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
@@ -387,50 +422,86 @@ std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
     const QString path = temp.fileName();
     temp.close();
     QFile::remove(path);
+    QStringList attempted;
 
 #ifdef Q_OS_MAC
     if (QFileInfo::exists("/usr/sbin/screencapture")) {
-        return runScreenshotCommand("/usr/sbin/screencapture", {"-i", path}, path, parent);
+        QString error;
+        const auto image = runScreenshotCommand("/usr/sbin/screencapture", {"-i", path}, path, parent, &error);
+        if (image.has_value()) {
+            return image;
+        }
+        QMessageBox::warning(parent, "Screenshot", "screencapture failed: " + error);
+        return std::nullopt;
     }
 #else
-    const QString gnomeScreenshot = QStandardPaths::findExecutable("gnome-screenshot");
+    const auto tryTool = [&](const QString &label, const QString &program, const QStringList &arguments) -> std::optional<QImage> {
+        if (program.isEmpty()) {
+            return std::nullopt;
+        }
+        QString error;
+        attempted << (label + " (" + program + ")");
+        const auto image = runScreenshotCommand(program, arguments, path, parent, &error);
+        if (image.has_value()) {
+            return image;
+        }
+        attempted.last() += ": " + (error.isEmpty() ? "failed" : error);
+        return std::nullopt;
+    };
+
+    const QString gnomeScreenshot = findProgram("gnome-screenshot");
     if (!gnomeScreenshot.isEmpty()) {
-        return runScreenshotCommand(gnomeScreenshot, {"-a", "-f", path}, path, parent);
+        if (const auto image = tryTool("gnome-screenshot", gnomeScreenshot, {"-a", "-f", path}); image.has_value()) {
+            return image;
+        }
     }
 
-    const QString grim = QStandardPaths::findExecutable("grim");
-    const QString slurp = QStandardPaths::findExecutable("slurp");
-    const QString shell = QStandardPaths::findExecutable("sh");
+    const QString grim = findProgram("grim");
+    const QString slurp = findProgram("slurp");
+    const QString shell = findProgram("sh").isEmpty() ? "/bin/sh" : findProgram("sh");
     if (!grim.isEmpty() && !slurp.isEmpty() && !shell.isEmpty()) {
         const QString script = "geometry=\"$(slurp)\" || exit 1\n"
                                "grim -g \"$geometry\" \"$1\"";
-        return runScreenshotCommand(shell, {"-c", script, "solution-finder-screenshot", path}, path, parent);
+        if (const auto image = tryTool("grim+slurp", shell, {"-c", script, "solution-finder-screenshot", path}); image.has_value()) {
+            return image;
+        }
     }
 
-    const QString spectacle = QStandardPaths::findExecutable("spectacle");
+    const QString spectacle = findProgram("spectacle");
     if (!spectacle.isEmpty()) {
-        return runScreenshotCommand(spectacle, {"-r", "-b", "-n", "-o", path}, path, parent);
+        if (const auto image = tryTool("spectacle", spectacle, {"-r", "-b", "-n", "-o", path}); image.has_value()) {
+            return image;
+        }
     }
 
-    const QString flameshot = QStandardPaths::findExecutable("flameshot");
+    const QString flameshot = findProgram("flameshot");
     if (!flameshot.isEmpty()) {
-        return runScreenshotCommand(flameshot, {"gui", "-p", path}, path, parent);
+        if (const auto image = tryTool("flameshot", flameshot, {"gui", "-p", path}); image.has_value()) {
+            return image;
+        }
     }
 
-    const QString maim = QStandardPaths::findExecutable("maim");
+    const QString maim = findProgram("maim");
     if (!maim.isEmpty()) {
-        return runScreenshotCommand(maim, {"-s", path}, path, parent);
+        if (const auto image = tryTool("maim", maim, {"-s", path}); image.has_value()) {
+            return image;
+        }
     }
 
-    const QString scrot = QStandardPaths::findExecutable("scrot");
+    const QString scrot = findProgram("scrot");
     if (!scrot.isEmpty()) {
-        return runScreenshotCommand(scrot, {"-s", path}, path, parent);
+        if (const auto image = tryTool("scrot", scrot, {"-s", path}); image.has_value()) {
+            return image;
+        }
     }
 #endif
 
+    const QString detail = attempted.isEmpty()
+        ? "No compatible region screenshot tool was found."
+        : "Screenshot tools were found, but none produced an image:\n\n" + attempted.join("\n");
     QMessageBox::warning(parent,
                          "Screenshot",
-                         "No compatible region screenshot tool was found.\n\n"
+                         detail + "\n\n"
                          "On Linux, install one of: gnome-screenshot, grim + slurp, spectacle, flameshot, maim, or scrot.");
     return std::nullopt;
 }
