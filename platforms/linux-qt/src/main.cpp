@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -30,6 +31,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTextBrowser>
 #include <QTextStream>
 #include <QVBoxLayout>
 #include <QStyleFactory>
@@ -38,6 +40,7 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
+#include <random>
 #include <vector>
 
 namespace {
@@ -66,6 +69,13 @@ struct DecodedFumen {
     std::vector<std::array<int, kFumenBlocks>> pages;
     std::vector<FumenOperation> operations;
     int pageCount = 0;
+};
+
+struct PlayPiece {
+    int type = 0;
+    int rotation = 0;
+    int x = 4;
+    int y = 1;
 };
 
 QColor cellColor(int value) {
@@ -391,6 +401,7 @@ public:
         cells_.fill(0);
         setMinimumSize(260, 520);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setFocusPolicy(Qt::StrongFocus);
         setMouseTracking(true);
         setObjectName("boardWidget");
         setStyleSheet("QWidget#boardWidget { background-color: #000000; border: 3px solid #050505; border-radius: 7px; }");
@@ -443,6 +454,7 @@ public:
 
     std::function<void()> onChanged;
     std::function<bool(int)> onCellPressed;
+    std::function<void(int)> onKeyPressed;
 
 protected:
     void resizeEvent(QResizeEvent *) override {
@@ -468,6 +480,15 @@ protected:
         painting_ = false;
         eraseStroke_ = false;
         lastPainted_ = -1;
+    }
+
+    void keyPressEvent(QKeyEvent *event) override {
+        if (onKeyPressed) {
+            onKeyPressed(event->key());
+            event->accept();
+            return;
+        }
+        QWidget::keyPressEvent(event);
     }
 
 private:
@@ -740,12 +761,21 @@ private:
         editorLayout->addWidget(generatedField_);
 
         stack->addWidget(editorPage);
-        stack->addWidget(makePlaceholderPage("Play mode", "Playable mode will be ported after the editor and solver panes are stable.", stack));
-        stack->addWidget(makePlaceholderPage("Output preview", "Generated HTML output will be shown here once the Qt preview pane is ported.", stack));
-        stack->addWidget(makePlaceholderPage("Fumen preview", "Clickable solution fumen previews will be restored in this pane.", stack));
+        stack->addWidget(buildPlayPage(stack));
+        stack->addWidget(buildCenterOutputPage(stack));
+        stack->addWidget(buildPreviewPage(stack));
         layout->addWidget(stack, 1);
 
-        connect(sectionTabs, &QTabBar::currentChanged, stack, &QStackedWidget::setCurrentIndex);
+        connect(sectionTabs, &QTabBar::currentChanged, this, [this, stack](int index) {
+            stack->setCurrentIndex(index);
+            if (index == 1) {
+                playBoard_->setFocus();
+            } else if (index == 2) {
+                refreshGeneratedFiles();
+            } else if (index == 3) {
+                refreshPreviewCodes();
+            }
+        });
 
         connect(clearButton, &QPushButton::clicked, this, [this]() {
             clearCurrentPage();
@@ -865,6 +895,166 @@ private:
         return panel;
     }
 
+    QWidget *buildPlayPage(QWidget *parent) {
+        auto *page = new QWidget(parent);
+        auto *layout = new QHBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(12);
+
+        playBoard_ = new BoardWidget(page);
+        playBoard_->onCellPressed = [](int) { return true; };
+        playBoard_->onKeyPressed = [this](int key) { handlePlayKey(key); };
+        layout->addWidget(playBoard_, 1);
+
+        auto *side = new QWidget(page);
+        side->setMinimumWidth(240);
+        side->setMaximumWidth(300);
+        auto *sideLayout = new QVBoxLayout(side);
+        sideLayout->setContentsMargins(0, 0, 0, 0);
+        sideLayout->setSpacing(10);
+
+        auto *queueGroup = new QGroupBox("Play", side);
+        auto *queueLayout = new QVBoxLayout(queueGroup);
+        playStatusLabel_ = new QLabel("Load the editor board or start a new game.", queueGroup);
+        playStatusLabel_->setWordWrap(true);
+        playQueueLabel_ = new QLabel("Queue: -", queueGroup);
+        playQueueLabel_->setWordWrap(true);
+        playQueueEdit_ = new QLineEdit(queueGroup);
+        playQueueEdit_->setPlaceholderText("Queue, e.g. TILJSZO");
+        queueLayout->addWidget(playStatusLabel_);
+        queueLayout->addWidget(playQueueLabel_);
+        queueLayout->addWidget(playQueueEdit_);
+        auto *queueButtons = new QHBoxLayout();
+        auto *applyQueueButton = new QPushButton("Apply", queueGroup);
+        auto *randomQueueButton = new QPushButton("Random", queueGroup);
+        queueButtons->addWidget(applyQueueButton);
+        queueButtons->addWidget(randomQueueButton);
+        queueLayout->addLayout(queueButtons);
+        sideLayout->addWidget(queueGroup);
+
+        auto *moveGroup = new QGroupBox("Moves", side);
+        auto *moveGrid = new QGridLayout(moveGroup);
+        auto *leftButton = new QPushButton("Left", moveGroup);
+        auto *rightButton = new QPushButton("Right", moveGroup);
+        auto *downButton = new QPushButton("Soft", moveGroup);
+        auto *cwButton = new QPushButton("CW", moveGroup);
+        auto *ccwButton = new QPushButton("CCW", moveGroup);
+        auto *hardButton = new QPushButton("Hard Drop", moveGroup);
+        auto *loadButton = new QPushButton("Load Editor", moveGroup);
+        auto *newButton = new QPushButton("New", moveGroup);
+        moveGrid->addWidget(leftButton, 0, 0);
+        moveGrid->addWidget(rightButton, 0, 1);
+        moveGrid->addWidget(downButton, 0, 2);
+        moveGrid->addWidget(cwButton, 1, 0);
+        moveGrid->addWidget(ccwButton, 1, 1);
+        moveGrid->addWidget(hardButton, 1, 2);
+        moveGrid->addWidget(loadButton, 2, 0, 1, 2);
+        moveGrid->addWidget(newButton, 2, 2);
+        sideLayout->addWidget(moveGroup);
+        sideLayout->addStretch(1);
+        layout->addWidget(side, 0);
+
+        connect(applyQueueButton, &QPushButton::clicked, this, [this]() {
+            setPlayQueueFromText(playQueueEdit_->text());
+        });
+        connect(randomQueueButton, &QPushButton::clicked, this, [this]() {
+            randomizePlayQueue();
+        });
+        connect(leftButton, &QPushButton::clicked, this, [this]() { movePlayPiece(-1, 0); });
+        connect(rightButton, &QPushButton::clicked, this, [this]() { movePlayPiece(1, 0); });
+        connect(downButton, &QPushButton::clicked, this, [this]() { movePlayPiece(0, 1); });
+        connect(cwButton, &QPushButton::clicked, this, [this]() { rotatePlayPiece(1); });
+        connect(ccwButton, &QPushButton::clicked, this, [this]() { rotatePlayPiece(-1); });
+        connect(hardButton, &QPushButton::clicked, this, [this]() { hardDropPlayPiece(); });
+        connect(loadButton, &QPushButton::clicked, this, [this]() { loadEditorBoardIntoPlay(); });
+        connect(newButton, &QPushButton::clicked, this, [this]() { newPlayGame(); });
+
+        newPlayGame();
+        return page;
+    }
+
+    QWidget *buildCenterOutputPage(QWidget *parent) {
+        auto *page = new QWidget(parent);
+        auto *layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        auto *toolbar = new QHBoxLayout();
+        outputFileBox_ = new QComboBox(page);
+        auto *refreshButton = new QPushButton("Refresh", page);
+        toolbar->addWidget(new QLabel("Generated File", page));
+        toolbar->addWidget(outputFileBox_, 1);
+        toolbar->addWidget(refreshButton);
+        layout->addLayout(toolbar);
+
+        centerOutputBrowser_ = new QTextBrowser(page);
+        centerOutputBrowser_->setOpenExternalLinks(false);
+        centerOutputBrowser_->setStyleSheet("font-family: 'Menlo', 'SF Mono', 'DejaVu Sans Mono', monospace; font-size: 13px;");
+        layout->addWidget(centerOutputBrowser_, 1);
+
+        connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshGeneratedFiles(); });
+        connect(outputFileBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() { showSelectedGeneratedFile(); });
+        connect(centerOutputBrowser_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
+            loadPreviewCode(url.toString());
+        });
+        return page;
+    }
+
+    QWidget *buildPreviewPage(QWidget *parent) {
+        auto *page = new QWidget(parent);
+        auto *layout = new QHBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(12);
+
+        previewBoard_ = new BoardWidget(page);
+        previewBoard_->onCellPressed = [](int) { return true; };
+        layout->addWidget(previewBoard_, 1);
+
+        auto *side = new QWidget(page);
+        side->setMinimumWidth(240);
+        side->setMaximumWidth(300);
+        auto *sideLayout = new QVBoxLayout(side);
+        sideLayout->setContentsMargins(0, 0, 0, 0);
+        sideLayout->setSpacing(10);
+        previewCodeBox_ = new QComboBox(side);
+        previewPageLabel_ = new QLabel("1/1", side);
+        previewPageLabel_->setAlignment(Qt::AlignCenter);
+        auto *prevButton = new QPushButton("Previous", side);
+        auto *nextButton = new QPushButton("Next", side);
+        auto *loadCurrentButton = new QPushButton("Load Editor Code", side);
+        auto *sendButton = new QPushButton("Send To Editor", side);
+        sideLayout->addWidget(new QLabel("Fumen Preview", side));
+        sideLayout->addWidget(previewCodeBox_);
+        auto *navRow = new QHBoxLayout();
+        navRow->addWidget(prevButton);
+        navRow->addWidget(previewPageLabel_);
+        navRow->addWidget(nextButton);
+        sideLayout->addLayout(navRow);
+        sideLayout->addWidget(loadCurrentButton);
+        sideLayout->addWidget(sendButton);
+        sideLayout->addStretch(1);
+        layout->addWidget(side, 0);
+
+        connect(previewCodeBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            loadPreviewCode(previewCodeBox_->currentText());
+        });
+        connect(prevButton, &QPushButton::clicked, this, [this]() {
+            goToPreviewPage(currentPreviewPage_ - 1);
+        });
+        connect(nextButton, &QPushButton::clicked, this, [this]() {
+            goToPreviewPage(currentPreviewPage_ + 1);
+        });
+        connect(loadCurrentButton, &QPushButton::clicked, this, [this]() {
+            loadPreviewCode(fumenEdit_->toPlainText().trimmed());
+        });
+        connect(sendButton, &QPushButton::clicked, this, [this]() {
+            sendPreviewToEditor();
+        });
+
+        loadPreviewCode(fumenEdit_ ? fumenEdit_->toPlainText().trimmed() : QString());
+        return page;
+    }
+
     QWidget *makePlaceholderPage(const QString &title, const QString &body, QWidget *parent) {
         auto *page = new QWidget(parent);
         auto *layout = new QVBoxLayout(page);
@@ -895,8 +1085,9 @@ private:
             "\n"
             "- This shell is native Qt Widgets, not a browser UI.\n"
             "- Board edits produce an sfinder field file.\n"
-            "- Opener selection currently loads fumen codes into the text box.\n"
-            "- Fumen decoding, output previews, screenshots, and play mode are the next layers to port.\n"
+            "- Opener selection loads fumen codes and pages into the native editor.\n"
+            "- The center Play, Output, and Preview tabs are early native ports.\n"
+            "- Screenshot import and advanced settings are still expected follow-up work.\n"
             "\n"
             "Pattern examples\n"
             "\n"
@@ -1325,6 +1516,385 @@ private:
         updateGeneratedField();
     }
 
+    std::array<int, kColumns * kRows> visibleCellsFromFumenPage(const std::vector<std::array<int, kFumenBlocks>> &pages,
+                                                                 const std::vector<FumenOperation> &operations,
+                                                                 int page) const {
+        std::array<int, kColumns * kRows> visible{};
+        visible.fill(0);
+        if (page < 0 || page >= static_cast<int>(pages.size())) {
+            return visible;
+        }
+        std::array<int, kFumenBlocks> field = pages[page];
+        if (page < static_cast<int>(operations.size()) && operations[page].type > 0) {
+            for (int index : fumenOperationCells(operations[page])) {
+                if (0 <= index && index < kFumenBlocks) {
+                    field[index] = operations[page].type;
+                }
+            }
+        }
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                visible[row * kColumns + col] = qBound(0, field[(kVisibleTopRow + row) * kColumns + col], 8);
+            }
+        }
+        return visible;
+    }
+
+    void refreshGeneratedFiles() {
+        if (!outputFileBox_) {
+            return;
+        }
+        const QString current = outputFileBox_->currentData().toString();
+        outputFileBox_->blockSignals(true);
+        outputFileBox_->clear();
+
+        QDir dir(QDir(appDataDir()).filePath("run"));
+        const QFileInfoList files = dir.entryInfoList(QDir::Files, QDir::Time);
+        for (const QFileInfo &file : files) {
+            if (file.fileName().startsWith("qt_output")) {
+                outputFileBox_->addItem(file.fileName(), file.absoluteFilePath());
+            }
+        }
+        if (outputFileBox_->count() == 0) {
+            outputFileBox_->addItem("No generated files yet", "");
+        }
+        const int index = outputFileBox_->findData(current);
+        if (index >= 0) {
+            outputFileBox_->setCurrentIndex(index);
+        }
+        outputFileBox_->blockSignals(false);
+        showSelectedGeneratedFile();
+    }
+
+    void showSelectedGeneratedFile() {
+        if (!centerOutputBrowser_ || !outputFileBox_) {
+            return;
+        }
+        const QString path = outputFileBox_->currentData().toString();
+        if (path.isEmpty()) {
+            centerOutputBrowser_->setPlainText("Run a command that creates output files, then click Refresh.");
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            centerOutputBrowser_->setPlainText("Could not open " + path);
+            return;
+        }
+        const QString content = QString::fromUtf8(file.readAll());
+        if (path.endsWith(".html", Qt::CaseInsensitive) || content.trimmed().startsWith("<")) {
+            centerOutputBrowser_->setHtml(content);
+        } else {
+            centerOutputBrowser_->setPlainText(content);
+        }
+        extractPreviewCodes(content);
+    }
+
+    void extractPreviewCodes(const QString &content) {
+        if (!previewCodeBox_) {
+            return;
+        }
+        QRegularExpression regex("v115@[A-Za-z0-9+/\\?]+");
+        QRegularExpressionMatchIterator it = regex.globalMatch(content);
+        QStringList codes;
+        while (it.hasNext()) {
+            const QString code = it.next().captured(0);
+            if (!codes.contains(code)) {
+                codes << code;
+            }
+        }
+        if (codes.isEmpty()) {
+            return;
+        }
+        previewCodeBox_->blockSignals(true);
+        previewCodeBox_->clear();
+        for (const QString &code : codes) {
+            previewCodeBox_->addItem(code);
+        }
+        previewCodeBox_->blockSignals(false);
+        loadPreviewCode(codes.first());
+    }
+
+    void refreshPreviewCodes() {
+        if (!previewCodeBox_) {
+            return;
+        }
+        const QString code = fumenEdit_ ? fumenEdit_->toPlainText().trimmed() : QString();
+        if (!code.isEmpty() && previewCodeBox_->findText(code) < 0) {
+            previewCodeBox_->blockSignals(true);
+            previewCodeBox_->insertItem(0, code);
+            previewCodeBox_->setCurrentIndex(0);
+            previewCodeBox_->blockSignals(false);
+        }
+        if (!code.isEmpty()) {
+            loadPreviewCode(code);
+        } else {
+            updatePreviewBoard();
+        }
+    }
+
+    void loadPreviewCode(QString code) {
+        if (code.startsWith("file:", Qt::CaseInsensitive)) {
+            return;
+        }
+        const int prefix = code.indexOf("v115@");
+        if (prefix > 0) {
+            code = code.mid(prefix);
+        }
+        if (!code.startsWith("v115@")) {
+            return;
+        }
+        const auto decoded = decodeFumenV115(code);
+        if (!decoded.has_value()) {
+            return;
+        }
+        previewPages_ = decoded->pages;
+        previewOperations_ = decoded->operations;
+        currentPreviewPage_ = 0;
+        updatePreviewBoard();
+    }
+
+    void updatePreviewBoard() {
+        if (!previewBoard_) {
+            return;
+        }
+        previewBoard_->setCells(visibleCellsFromFumenPage(previewPages_, previewOperations_, currentPreviewPage_));
+        if (previewPageLabel_) {
+            const int count = qMax(1, static_cast<int>(previewPages_.size()));
+            previewPageLabel_->setText(QString("%1/%2").arg(qMin(currentPreviewPage_ + 1, count)).arg(count));
+        }
+    }
+
+    void goToPreviewPage(int page) {
+        if (page < 0 || page >= static_cast<int>(previewPages_.size())) {
+            return;
+        }
+        currentPreviewPage_ = page;
+        updatePreviewBoard();
+    }
+
+    void sendPreviewToEditor() {
+        if (previewPages_.empty()) {
+            return;
+        }
+        replaceFumenPages(previewPages_, previewOperations_);
+        updateFumenCodeFromPages();
+    }
+
+    int pieceTypeFromChar(QChar ch) const {
+        switch (ch.toUpper().unicode()) {
+        case 'I': return 1;
+        case 'L': return 2;
+        case 'O': return 3;
+        case 'Z': return 4;
+        case 'T': return 5;
+        case 'J': return 6;
+        case 'S': return 7;
+        default: return 0;
+        }
+    }
+
+    QString pieceName(int type) const {
+        return cellName(type);
+    }
+
+    std::vector<int> playPieceCells(const PlayPiece &piece) const {
+        std::vector<int> cells;
+        if (piece.type <= 0 || piece.type >= 8) {
+            return cells;
+        }
+        const auto &offsets = fumenPieceOffsets()[piece.type][piece.rotation % 4];
+        for (const QPoint &offset : offsets) {
+            const int x = piece.x + offset.x() - 1;
+            const int y = piece.y + offset.y() - 1;
+            if (0 <= x && x < kColumns && 0 <= y && y < kRows) {
+                cells.push_back(y * kColumns + x);
+            }
+        }
+        return cells;
+    }
+
+    bool playPieceCollides(const PlayPiece &piece) const {
+        if (piece.type <= 0) {
+            return false;
+        }
+        const auto &offsets = fumenPieceOffsets()[piece.type][piece.rotation % 4];
+        for (const QPoint &offset : offsets) {
+            const int x = piece.x + offset.x() - 1;
+            const int y = piece.y + offset.y() - 1;
+            if (x < 0 || x >= kColumns || y >= kRows) {
+                return true;
+            }
+            if (y >= 0 && playCells_[y * kColumns + x] != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void updatePlayBoard() {
+        if (!playBoard_) {
+            return;
+        }
+        std::array<int, kColumns * kRows> visible = playCells_;
+        if (currentPlayPiece_.type > 0) {
+            for (int index : playPieceCells(currentPlayPiece_)) {
+                visible[index] = currentPlayPiece_.type;
+            }
+        }
+        playBoard_->setCells(visible);
+        if (playQueueLabel_) {
+            QString queueText;
+            for (int piece : playQueue_) {
+                queueText += pieceName(piece);
+            }
+            playQueueLabel_->setText(QString("Current: %1\nQueue: %2")
+                                         .arg(currentPlayPiece_.type > 0 ? pieceName(currentPlayPiece_.type) : "-",
+                                              queueText.isEmpty() ? "-" : queueText));
+        }
+    }
+
+    void setPlayQueueFromText(const QString &text) {
+        playQueue_.clear();
+        for (QChar ch : text) {
+            const int type = pieceTypeFromChar(ch);
+            if (type > 0) {
+                playQueue_.push_back(type);
+            }
+        }
+        if (currentPlayPiece_.type == 0) {
+            spawnNextPlayPiece();
+        }
+        updatePlayBoard();
+    }
+
+    void randomizePlayQueue() {
+        refillPlayQueue();
+        currentPlayPiece_ = PlayPiece();
+        spawnNextPlayPiece();
+        updatePlayBoard();
+    }
+
+    void refillPlayQueue() {
+        playQueue_ = {1, 2, 3, 4, 5, 6, 7};
+        std::shuffle(playQueue_.begin(), playQueue_.end(), rng_);
+    }
+
+    void newPlayGame() {
+        playCells_.fill(0);
+        randomizePlayQueue();
+        if (playStatusLabel_) {
+            playStatusLabel_->setText("Keyboard: arrows move, Z/X rotate, Space hard drops.");
+        }
+        updatePlayBoard();
+    }
+
+    void loadEditorBoardIntoPlay() {
+        playCells_ = board_ ? board_->cells() : std::array<int, kColumns * kRows>{};
+        currentPlayPiece_ = PlayPiece();
+        spawnNextPlayPiece();
+        if (playStatusLabel_) {
+            playStatusLabel_->setText("Loaded editor board into play.");
+        }
+        updatePlayBoard();
+    }
+
+    void spawnNextPlayPiece() {
+        if (playQueue_.empty()) {
+            refillPlayQueue();
+        }
+        if (playQueue_.empty()) {
+            currentPlayPiece_ = PlayPiece();
+            return;
+        }
+        currentPlayPiece_ = PlayPiece{playQueue_.front(), 0, 4, 1};
+        playQueue_.erase(playQueue_.begin());
+        if (playPieceCollides(currentPlayPiece_)) {
+            currentPlayPiece_ = PlayPiece();
+            if (playStatusLabel_) {
+                playStatusLabel_->setText("Game over. Click New to restart.");
+            }
+        }
+    }
+
+    void movePlayPiece(int dx, int dy) {
+        PlayPiece next = currentPlayPiece_;
+        next.x += dx;
+        next.y += dy;
+        if (!playPieceCollides(next)) {
+            currentPlayPiece_ = next;
+            updatePlayBoard();
+        }
+    }
+
+    void rotatePlayPiece(int delta) {
+        PlayPiece next = currentPlayPiece_;
+        next.rotation = (next.rotation + delta + 4) % 4;
+        if (!playPieceCollides(next)) {
+            currentPlayPiece_ = next;
+            updatePlayBoard();
+        }
+    }
+
+    void lockPlayPiece() {
+        for (int index : playPieceCells(currentPlayPiece_)) {
+            playCells_[index] = currentPlayPiece_.type;
+        }
+        std::array<int, kColumns * kRows> cleared{};
+        cleared.fill(0);
+        int writeRow = kRows - 1;
+        for (int row = kRows - 1; row >= 0; --row) {
+            bool full = true;
+            for (int col = 0; col < kColumns; ++col) {
+                if (playCells_[row * kColumns + col] == 0) {
+                    full = false;
+                    break;
+                }
+            }
+            if (!full) {
+                for (int col = 0; col < kColumns; ++col) {
+                    cleared[writeRow * kColumns + col] = playCells_[row * kColumns + col];
+                }
+                --writeRow;
+            }
+        }
+        playCells_ = cleared;
+        spawnNextPlayPiece();
+        updatePlayBoard();
+    }
+
+    void hardDropPlayPiece() {
+        if (currentPlayPiece_.type <= 0) {
+            return;
+        }
+        PlayPiece next = currentPlayPiece_;
+        while (true) {
+            PlayPiece lower = next;
+            lower.y += 1;
+            if (playPieceCollides(lower)) {
+                break;
+            }
+            next = lower;
+        }
+        currentPlayPiece_ = next;
+        lockPlayPiece();
+    }
+
+    void handlePlayKey(int key) {
+        if (key == Qt::Key_Left) {
+            movePlayPiece(-1, 0);
+        } else if (key == Qt::Key_Right) {
+            movePlayPiece(1, 0);
+        } else if (key == Qt::Key_Down) {
+            movePlayPiece(0, 1);
+        } else if (key == Qt::Key_Space) {
+            hardDropPlayPiece();
+        } else if (key == Qt::Key_Z) {
+            rotatePlayPiece(-1);
+        } else if (key == Qt::Key_X || key == Qt::Key_Up) {
+            rotatePlayPiece(1);
+        }
+    }
+
     void selectPaint(int value) {
         if (board_) {
             board_->setPaintValue(value);
@@ -1596,6 +2166,7 @@ private:
             process_ = nullptr;
             runButton_->setEnabled(true);
             cancelButton_->setEnabled(false);
+            refreshGeneratedFiles();
         });
 
         runButton_->setEnabled(false);
@@ -1642,11 +2213,27 @@ private:
     QPlainTextEdit *fumenEdit_ = nullptr;
     QPlainTextEdit *generatedField_ = nullptr;
     QPlainTextEdit *outputEdit_ = nullptr;
+    BoardWidget *playBoard_ = nullptr;
+    QLabel *playStatusLabel_ = nullptr;
+    QLabel *playQueueLabel_ = nullptr;
+    QLineEdit *playQueueEdit_ = nullptr;
+    QTextBrowser *centerOutputBrowser_ = nullptr;
+    QComboBox *outputFileBox_ = nullptr;
+    BoardWidget *previewBoard_ = nullptr;
+    QComboBox *previewCodeBox_ = nullptr;
+    QLabel *previewPageLabel_ = nullptr;
     QPushButton *runButton_ = nullptr;
     QPushButton *cancelButton_ = nullptr;
     std::vector<QPushButton *> paintButtons_;
     std::vector<std::array<int, kFumenBlocks>> fumenPages_;
     std::vector<FumenOperation> fumenOperations_;
+    std::array<int, kColumns * kRows> playCells_{};
+    PlayPiece currentPlayPiece_;
+    std::vector<int> playQueue_;
+    std::mt19937 rng_{std::random_device{}()};
+    std::vector<std::array<int, kFumenBlocks>> previewPages_;
+    std::vector<FumenOperation> previewOperations_;
+    int currentPreviewPage_ = 0;
     FumenOperation currentOperation_;
     int currentFumenPage_ = 0;
     bool updatingFumenEdit_ = false;

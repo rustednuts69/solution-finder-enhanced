@@ -10,12 +10,13 @@ can move forward without disturbing the working macOS version.
 - 10x20 editable board with click and drag painting
 - Opener group and variation selector from `shared/openers.json`
 - Native fumen page controls, mino placement controls, and fumen output code
+- Early native Play, Output, and Preview tabs
 - Core sfinder command controls
 - Process runner for the bundled `solution-finder-1.43/sfinder.jar`
 - Command output pane
 
-Screenshot import, playable mode, output preview, and the full advanced settings
-set are still expected follow-up work in this Qt port.
+Screenshot import, richer play tuning, HTML link actions, and the full advanced
+settings set are still expected follow-up work in this Qt port.
 
 ## Build And Run On Linux
 
