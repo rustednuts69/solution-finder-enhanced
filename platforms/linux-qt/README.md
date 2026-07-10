@@ -14,9 +14,12 @@ can move forward without disturbing the working macOS version.
 - Core sfinder command controls
 - Process runner for the bundled `solution-finder-1.43/sfinder.jar`
 - Command output pane
+- Screenshot board import
+- Screenshot opener detector
+- Embedded HTML output with fumen-link preview handoff
 
-Screenshot import, richer play tuning, HTML link actions, and the full advanced
-settings set are still expected follow-up work in this Qt port.
+Richer play tuning and the full advanced settings set are still expected
+follow-up work in this Qt port.
 
 ## Build And Run On Linux
 
@@ -63,3 +66,17 @@ cmake --build build
 The app discovers the repository root by looking for `shared/openers.json`, so
 run it from inside a clone of `solution-finder-enhanced` while this port is
 early.
+
+## Build An AppImage
+
+Run this on Linux after installing the same Qt build dependencies above. The
+script downloads `linuxdeploy` and the Qt plugin into
+`platforms/linux-qt/.appimage-tools` if they are not already present.
+
+```sh
+cd solution-finder-enhanced/platforms/linux-qt
+./packaging/build-appimage.sh
+```
+
+The AppImage includes the Qt executable, `shared/openers.json`, and the bundled
+`solution-finder-1.43` sfinder files under `usr/share/solution-finder-enhanced`.

@@ -58,5 +58,11 @@ cmake --build build
 ./build/solution-finder-enhanced-qt
 ```
 
-The Qt app should be run from inside the cloned repository for now so it can
-find the shared opener book and bundled sfinder files.
+To build an AppImage on Linux:
+
+```sh
+cd solution-finder-enhanced/platforms/linux-qt
+./packaging/build-appimage.sh
+```
+
+The AppImage build includes the shared opener book and bundled sfinder files.

@@ -5,13 +5,16 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,6 +23,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
@@ -27,6 +31,8 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QRubberBand>
+#include <QScreen>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStackedWidget>
@@ -43,6 +49,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <random>
@@ -62,6 +69,28 @@ struct Opener {
     QString openerName;
     QString variationName;
     QString code;
+};
+
+struct OpeningDetectionResult {
+    Opener opener;
+    double occupancyScore = 0.0;
+    double colorScore = 0.0;
+    int comparableColorCells = 0;
+    bool mirrored = false;
+    int pageIndex = 0;
+    int rowOffset = 0;
+
+    double overallScore() const {
+        return comparableColorCells >= 6 ? occupancyScore * 0.82 + colorScore * 0.18 : occupancyScore;
+    }
+
+    QString displayName() const {
+        QString name = opener.variationName == "Base" ? opener.openerName : opener.openerName + " - " + opener.variationName;
+        if (mirrored) {
+            name += " mirrored";
+        }
+        return name;
+    }
 };
 
 struct FumenOperation {
@@ -182,6 +211,11 @@ QString findRepoRoot(QString start) {
             QFileInfo::exists(dir.filePath("solution-finder-1.43/sfinder.jar"))) {
             return dir.absolutePath();
         }
+        const QString installedRoot = QDir::cleanPath(dir.filePath("../share/solution-finder-enhanced"));
+        if (QFileInfo::exists(installedRoot + "/shared/openers.json") &&
+            QFileInfo::exists(installedRoot + "/solution-finder-1.43/sfinder.jar")) {
+            return installedRoot;
+        }
         if (!dir.cdUp()) {
             return QDir::currentPath();
         }
@@ -196,6 +230,203 @@ QString appDataDir() {
     QDir().mkpath(base);
     return base;
 }
+
+double hueDistance(double lhs, double rhs) {
+    const double distance = std::fmod(std::abs(lhs - rhs), 360.0);
+    return std::min(distance, 360.0 - distance);
+}
+
+double colorHue(double red, double green, double blue, double maximum, double chroma) {
+    if (chroma <= 0.0) {
+        return 0.0;
+    }
+    double hue = 0.0;
+    if (maximum == red) {
+        hue = 60.0 * std::fmod((green - blue) / chroma, 6.0);
+    } else if (maximum == green) {
+        hue = 60.0 * ((blue - red) / chroma + 2.0);
+    } else {
+        hue = 60.0 * ((red - green) / chroma + 4.0);
+    }
+    return hue < 0.0 ? hue + 360.0 : hue;
+}
+
+bool isRecognizedGray(double red, double green, double blue, double brightness, double chroma, double saturation) {
+    if (brightness <= 0.32 || brightness >= 0.82 || saturation >= 0.12 || chroma >= 0.09) {
+        return false;
+    }
+    const double average = (red + green + blue) / 3.0;
+    return std::max({std::abs(red - average), std::abs(green - average), std::abs(blue - average)}) < 0.045;
+}
+
+int classifiedFumenValue(double red, double green, double blue, double alpha) {
+    if (alpha <= 0.2) {
+        return 0;
+    }
+    const double maximum = std::max({red, green, blue});
+    const double minimum = std::min({red, green, blue});
+    const double brightness = maximum;
+    const double chroma = maximum - minimum;
+    const double saturation = maximum == 0.0 ? 0.0 : chroma / maximum;
+    if (brightness < 0.14) {
+        return 0;
+    }
+
+    const double hue = colorHue(red, green, blue, maximum, chroma);
+    if (saturation >= 0.26 && chroma >= 0.11) {
+        const std::vector<std::pair<int, double>> pieceHues = {
+            {1, 186.0}, {2, 34.0}, {3, 58.0}, {4, 358.0}, {5, 292.0}, {6, 232.0}, {7, 124.0}
+        };
+        int bestValue = 0;
+        double bestScore = 360.0;
+        for (const auto &[value, pieceHue] : pieceHues) {
+            const double score = hueDistance(hue, pieceHue);
+            if (score < bestScore) {
+                bestScore = score;
+                bestValue = value;
+            }
+        }
+        if (bestScore <= 42.0 && brightness > 0.20) {
+            return bestValue;
+        }
+    }
+
+    if (isRecognizedGray(red, green, blue, brightness, chroma, saturation)) {
+        return 8;
+    }
+    if (saturation < 0.30 || chroma < 0.13) {
+        return 0;
+    }
+    if (hue >= 165.0 && hue <= 205.0 && blue > red * 1.35) {
+        return 1;
+    }
+    if (green == maximum && blue < green * 0.82) {
+        if (hue >= 72.0 && hue < 158.0) {
+            return 7;
+        }
+        if (hue >= 45.0 && hue < 72.0 && red > green * 0.74) {
+            return 3;
+        }
+    }
+    return 0;
+}
+
+int sampledFumenValue(const QImage &image, int centerX, int centerY, int radius) {
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+    double alpha = 0.0;
+    double count = 0.0;
+    for (int y = std::max(0, centerY - radius); y <= std::min(image.height() - 1, centerY + radius); ++y) {
+        for (int x = std::max(0, centerX - radius); x <= std::min(image.width() - 1, centerX + radius); ++x) {
+            const QColor color = image.pixelColor(x, y).convertTo(QColor::Rgb);
+            red += color.redF();
+            green += color.greenF();
+            blue += color.blueF();
+            alpha += color.alphaF();
+            count += 1.0;
+        }
+    }
+    if (count <= 0.0) {
+        return 0;
+    }
+    return classifiedFumenValue(red / count, green / count, blue / count, alpha / count);
+}
+
+std::optional<std::array<int, kFumenBlocks>> fumenCellsFromBoardImage(const QImage &source, bool preservingColors) {
+    const QImage image = source.convertToFormat(QImage::Format_RGBA8888);
+    if (image.width() < 10 || image.height() < 10) {
+        return std::nullopt;
+    }
+    const int inferredRows = std::min(kRows, std::max(1, static_cast<int>(std::round((static_cast<double>(image.height()) / image.width()) * 10.0))));
+    const int targetTopRow = kVisibleBottomRow - inferredRows;
+    const int sampleRadius = std::max(1, std::min(image.width() / 120, image.height() / std::max(inferredRows * 12, 1)));
+    std::array<int, kFumenBlocks> cells{};
+    cells.fill(0);
+    for (int sourceRow = 0; sourceRow < inferredRows; ++sourceRow) {
+        for (int column = 0; column < kColumns; ++column) {
+            const int centerX = static_cast<int>((column + 0.5) * image.width() / 10.0);
+            const int centerY = static_cast<int>((sourceRow + 0.5) * image.height() / static_cast<double>(inferredRows));
+            const int value = sampledFumenValue(image, centerX, centerY, sampleRadius);
+            cells[(targetTopRow + sourceRow) * kColumns + column] = preservingColors || value == 0 ? value : 8;
+        }
+    }
+    return cells;
+}
+
+class ScreenCaptureOverlay : public QWidget {
+public:
+    explicit ScreenCaptureOverlay(QWidget *parent = nullptr)
+        : QWidget(parent), rubberBand_(new QRubberBand(QRubberBand::Rectangle, this)) {
+        setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
+        setAttribute(Qt::WA_TranslucentBackground);
+        setCursor(Qt::CrossCursor);
+        if (QScreen *screen = QGuiApplication::primaryScreen()) {
+            screen_ = screen;
+            setGeometry(screen->geometry());
+            background_ = screen->grabWindow(0);
+        }
+    }
+
+    static std::optional<QImage> capture(QWidget *parent = nullptr) {
+        ScreenCaptureOverlay overlay(parent);
+        if (!overlay.screen_) {
+            return std::nullopt;
+        }
+        overlay.showFullScreen();
+        overlay.raise();
+        overlay.activateWindow();
+        overlay.loop_.exec();
+        return overlay.result_;
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        if (!background_.isNull()) {
+            painter.drawPixmap(rect(), background_);
+        }
+        painter.fillRect(rect(), QColor(0, 0, 0, 96));
+    }
+
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Escape) {
+            loop_.quit();
+            close();
+            return;
+        }
+        QWidget::keyPressEvent(event);
+    }
+
+    void mousePressEvent(QMouseEvent *event) override {
+        origin_ = event->pos();
+        rubberBand_->setGeometry(QRect(origin_, QSize()));
+        rubberBand_->show();
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override {
+        rubberBand_->setGeometry(QRect(origin_, event->pos()).normalized());
+    }
+
+    void mouseReleaseEvent(QMouseEvent *) override {
+        const QRect localRect = rubberBand_->geometry().normalized();
+        rubberBand_->hide();
+        if (localRect.width() >= 10 && localRect.height() >= 10 && screen_) {
+            const QRect globalRect = localRect.translated(geometry().topLeft());
+            result_ = screen_->grabWindow(0, globalRect.x(), globalRect.y(), globalRect.width(), globalRect.height()).toImage();
+        }
+        loop_.quit();
+        close();
+    }
+
+private:
+    QEventLoop loop_;
+    QRubberBand *rubberBand_ = nullptr;
+    QScreen *screen_ = nullptr;
+    QPixmap background_;
+    QPoint origin_;
+    std::optional<QImage> result_;
+};
 
 std::optional<DecodedFumen> decodeFumenV115(QString code) {
     code = code.trimmed();
@@ -670,6 +901,12 @@ private:
         openerVariationBox_ = new QComboBox(openerGroup);
         openerLayout->addRow("Base", openerGroupBox_);
         openerLayout->addRow("Variation", openerVariationBox_);
+        auto *openerActions = new QHBoxLayout();
+        auto *screenshotButton = new QPushButton("Screenshot", openerGroup);
+        auto *detectorButton = new QPushButton("Opener Detector", openerGroup);
+        openerActions->addWidget(screenshotButton);
+        openerActions->addWidget(detectorButton);
+        openerLayout->addRow("", openerActions);
         layout->addWidget(openerGroup);
 
         auto *actions = new QHBoxLayout();
@@ -687,6 +924,12 @@ private:
         });
         connect(openerVariationBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             loadSelectedOpener();
+        });
+        connect(screenshotButton, &QPushButton::clicked, this, [this]() {
+            importBoardScreenshot();
+        });
+        connect(detectorButton, &QPushButton::clicked, this, [this]() {
+            detectOpeningFromScreenshot();
         });
         connect(commandBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             updateCommandUi();
@@ -2542,6 +2785,327 @@ pre, code {
                 }
                 return;
             }
+        }
+    }
+
+    void replaceCurrentPageWithFumenCells(const std::array<int, kFumenBlocks> &cells) {
+        ensureFumenState();
+        fumenPages_[currentFumenPage_] = cells;
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            fumenPages_[currentFumenPage_][index] = 0;
+        }
+        currentOperation_ = FumenOperation();
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(false);
+            updatingFumenControls_ = false;
+        }
+        updateMinoControls();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    void importBoardScreenshot() {
+        const auto image = ScreenCaptureOverlay::capture(this);
+        if (!image.has_value()) {
+            return;
+        }
+        const bool preservingColors = !commandBox_ || commandBox_->currentText() != "setup";
+        const auto cells = fumenCellsFromBoardImage(*image, preservingColors);
+        if (!cells.has_value()) {
+            QMessageBox::warning(this, "Screenshot", "Could not read the screenshot as a Tetris board.");
+            return;
+        }
+        replaceCurrentPageWithFumenCells(*cells);
+        if (commandBox_ && commandBox_->currentText() == "setup") {
+            convertFumenToSetupGray();
+        }
+        if (outputEdit_) {
+            appendRawOutput("\nImported board screenshot.\n");
+        }
+    }
+
+    std::vector<std::vector<int>> fumenOccupancyMask(const std::array<int, kFumenBlocks> &cells, bool mirrored = false) const {
+        int usedHeight = 0;
+        for (int bottomOffset = 0; bottomOffset < kRows; ++bottomOffset) {
+            const int row = kVisibleBottomRow - 1 - bottomOffset;
+            bool occupied = false;
+            for (int col = 0; col < kColumns; ++col) {
+                if (cells[row * kColumns + col] != 0) {
+                    occupied = true;
+                    break;
+                }
+            }
+            if (occupied) {
+                usedHeight = bottomOffset + 1;
+            }
+        }
+        std::vector<std::vector<int>> mask;
+        for (int bottomOffset = 0; bottomOffset < usedHeight; ++bottomOffset) {
+            const int row = kVisibleBottomRow - 1 - bottomOffset;
+            std::vector<int> maskRow;
+            maskRow.reserve(kColumns);
+            for (int col = 0; col < kColumns; ++col) {
+                const int sourceColumn = mirrored ? kColumns - 1 - col : col;
+                maskRow.push_back(cells[row * kColumns + sourceColumn] != 0 ? 1 : 0);
+            }
+            mask.push_back(maskRow);
+        }
+        return mask;
+    }
+
+    std::vector<std::vector<int>> fumenColorMask(const std::array<int, kFumenBlocks> &cells, bool mirrored = false) const {
+        int usedHeight = 0;
+        for (int bottomOffset = 0; bottomOffset < kRows; ++bottomOffset) {
+            const int row = kVisibleBottomRow - 1 - bottomOffset;
+            bool occupied = false;
+            for (int col = 0; col < kColumns; ++col) {
+                if (cells[row * kColumns + col] != 0) {
+                    occupied = true;
+                    break;
+                }
+            }
+            if (occupied) {
+                usedHeight = bottomOffset + 1;
+            }
+        }
+        std::vector<std::vector<int>> mask;
+        for (int bottomOffset = 0; bottomOffset < usedHeight; ++bottomOffset) {
+            const int row = kVisibleBottomRow - 1 - bottomOffset;
+            std::vector<int> maskRow;
+            maskRow.reserve(kColumns);
+            for (int col = 0; col < kColumns; ++col) {
+                const int sourceColumn = mirrored ? kColumns - 1 - col : col;
+                const int value = cells[row * kColumns + sourceColumn];
+                maskRow.push_back(mirrored ? mirrorColor(value) : value);
+            }
+            mask.push_back(maskRow);
+        }
+        return mask;
+    }
+
+    std::vector<std::vector<int>> shiftedMask(const std::vector<std::vector<int>> &mask, int offset) const {
+        if (mask.empty() || offset == 0) {
+            return mask;
+        }
+        std::vector<std::vector<int>> shifted;
+        if (offset > 0) {
+            shifted.assign(offset, std::vector<int>(kColumns, 0));
+            shifted.insert(shifted.end(), mask.begin(), mask.end());
+            return shifted;
+        }
+        const int dropCount = std::min(static_cast<int>(mask.size()), std::abs(offset));
+        shifted.insert(shifted.end(), mask.begin() + dropCount, mask.end());
+        return shifted;
+    }
+
+    double occupancyScore(const std::vector<std::vector<int>> &lhs, const std::vector<std::vector<int>> &rhs) const {
+        const int height = std::max(lhs.size(), rhs.size());
+        if (height <= 0) {
+            return 0.0;
+        }
+        int intersection = 0;
+        int unionCount = 0;
+        int leftCount = 0;
+        int rightCount = 0;
+        for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const bool left = row < static_cast<int>(lhs.size()) && lhs[row][col] != 0;
+                const bool right = row < static_cast<int>(rhs.size()) && rhs[row][col] != 0;
+                if (left) {
+                    ++leftCount;
+                }
+                if (right) {
+                    ++rightCount;
+                }
+                if (left || right) {
+                    ++unionCount;
+                    if (left && right) {
+                        ++intersection;
+                    }
+                }
+            }
+        }
+        if (unionCount == 0 || leftCount == 0 || rightCount == 0) {
+            return 0.0;
+        }
+        const double jaccard = static_cast<double>(intersection) / unionCount;
+        const double coverage = std::min(static_cast<double>(intersection) / leftCount,
+                                         static_cast<double>(intersection) / rightCount);
+        return std::max(jaccard, coverage * 0.92);
+    }
+
+    std::pair<int, int> colorMatch(const std::vector<std::vector<int>> &lhs, const std::vector<std::vector<int>> &rhs) const {
+        const int height = std::max(lhs.size(), rhs.size());
+        int matching = 0;
+        int comparable = 0;
+        for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const int left = row < static_cast<int>(lhs.size()) ? lhs[row][col] : 0;
+                const int right = row < static_cast<int>(rhs.size()) ? rhs[row][col] : 0;
+                if (left == 0 || right == 0 || left == 8 || right == 8) {
+                    continue;
+                }
+                ++comparable;
+                if (left == right) {
+                    ++matching;
+                }
+            }
+        }
+        return {matching, comparable};
+    }
+
+    bool betterOpeningResult(const OpeningDetectionResult &candidate, const std::optional<OpeningDetectionResult> &current) const {
+        if (!current.has_value()) {
+            return true;
+        }
+        const double occupancyDelta = candidate.occupancyScore - current->occupancyScore;
+        if (std::abs(occupancyDelta) > 0.04) {
+            return occupancyDelta > 0;
+        }
+        if (candidate.comparableColorCells >= 6 && current->comparableColorCells >= 6) {
+            const double combinedDelta = candidate.overallScore() - current->overallScore();
+            if (std::abs(combinedDelta) > 0.01) {
+                return combinedDelta > 0;
+            }
+        }
+        if (std::abs(occupancyDelta) > 0.015) {
+            return occupancyDelta > 0;
+        }
+        const double colorDelta = candidate.colorScore - current->colorScore;
+        if (std::abs(colorDelta) > 0.08) {
+            return colorDelta > 0;
+        }
+        if (candidate.opener.variationName == "Base" && current->opener.variationName != "Base") {
+            return true;
+        }
+        return false;
+    }
+
+    std::optional<OpeningDetectionResult> bestOpeningDetectionResult(
+        const Opener &opener,
+        const std::vector<std::array<int, kFumenBlocks>> &pages,
+        const std::vector<std::vector<int>> &targetMask,
+        const std::vector<std::vector<int>> &targetColors) const {
+        std::optional<OpeningDetectionResult> best;
+        const std::vector<int> offsets = {-2, -1, 0, 1, 2};
+        for (int pageIndex = 0; pageIndex < static_cast<int>(pages.size()); ++pageIndex) {
+            for (bool mirrored : {false, true}) {
+                for (int offset : offsets) {
+                    const auto sampleMask = shiftedMask(fumenOccupancyMask(pages[pageIndex], mirrored), offset);
+                    const auto sampleColors = shiftedMask(fumenColorMask(pages[pageIndex], mirrored), offset);
+                    const double shape = occupancyScore(targetMask, sampleMask);
+                    const auto color = colorMatch(targetColors, sampleColors);
+                    OpeningDetectionResult candidate;
+                    candidate.opener = opener;
+                    candidate.occupancyScore = shape;
+                    candidate.colorScore = color.second == 0 ? 0.0 : static_cast<double>(color.first) / color.second;
+                    candidate.comparableColorCells = color.second;
+                    candidate.mirrored = mirrored;
+                    candidate.pageIndex = pageIndex;
+                    candidate.rowOffset = offset;
+                    if (betterOpeningResult(candidate, best)) {
+                        best = candidate;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    std::vector<OpeningDetectionResult> detectOpenersForCells(const std::array<int, kFumenBlocks> &cells) const {
+        const auto targetMask = fumenOccupancyMask(cells);
+        const auto targetColors = fumenColorMask(cells);
+        std::vector<OpeningDetectionResult> results;
+        for (const Opener &opener : openers_) {
+            if (opener.id.isEmpty() || opener.code.isEmpty() || opener.id == "empty") {
+                continue;
+            }
+            const auto decoded = decodeFumenV115(opener.code);
+            if (!decoded.has_value() || decoded->pages.empty()) {
+                continue;
+            }
+            const auto result = bestOpeningDetectionResult(opener, decoded->pages, targetMask, targetColors);
+            if (result.has_value() && (result->occupancyScore >= 0.42 || result->overallScore() >= 0.42)) {
+                results.push_back(*result);
+            }
+        }
+        std::sort(results.begin(), results.end(), [this](const OpeningDetectionResult &lhs, const OpeningDetectionResult &rhs) {
+            return betterOpeningResult(lhs, std::optional<OpeningDetectionResult>(rhs));
+        });
+        return results;
+    }
+
+    std::array<int, kFumenBlocks> mirroredFumenPage(std::array<int, kFumenBlocks> page) const {
+        std::array<int, kFumenBlocks> mirrored{};
+        mirrored.fill(0);
+        for (int row = 0; row < kFumenRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                mirrored[row * kColumns + (kColumns - 1 - col)] = mirrorColor(page[row * kColumns + col]);
+            }
+        }
+        return mirrored;
+    }
+
+    void loadDetectedOpening(const OpeningDetectionResult &result) {
+        const auto decoded = decodeFumenV115(result.opener.code);
+        if (!decoded.has_value()) {
+            return;
+        }
+        std::vector<std::array<int, kFumenBlocks>> pages = decoded->pages;
+        if (result.mirrored) {
+            for (auto &page : pages) {
+                page = mirroredFumenPage(page);
+            }
+        }
+        replaceFumenPages(pages, decoded->operations);
+        if (result.pageIndex >= 0 && result.pageIndex < static_cast<int>(fumenPages_.size())) {
+            goToFumenPage(result.pageIndex);
+        }
+        updatingFumenEdit_ = true;
+        fumenEdit_->setPlainText(result.opener.code);
+        updatingFumenEdit_ = false;
+        updateFumenCodeFromPages();
+        if (outputEdit_) {
+            appendRawOutput("\nDetected " + result.displayName() + ".\n");
+        }
+    }
+
+    void detectOpeningFromScreenshot() {
+        const auto image = ScreenCaptureOverlay::capture(this);
+        if (!image.has_value()) {
+            return;
+        }
+        const auto cells = fumenCellsFromBoardImage(*image, true);
+        if (!cells.has_value()) {
+            QMessageBox::warning(this, "Opener Detector", "Could not read the screenshot as a Tetris board.");
+            return;
+        }
+        const auto results = detectOpenersForCells(*cells);
+        if (results.empty() || results.front().overallScore() < 0.58) {
+            QMessageBox::information(this, "Opener Detector", "No opener match found.");
+            if (!results.empty()) {
+                appendRawOutput(QString("\nClosest opener: %1 (overall %2%, shape %3%, color %4%).\n")
+                                    .arg(results.front().displayName())
+                                    .arg(results.front().overallScore() * 100.0, 0, 'f', 1)
+                                    .arg(results.front().occupancyScore * 100.0, 0, 'f', 1)
+                                    .arg(results.front().colorScore * 100.0, 0, 'f', 1));
+            }
+            return;
+        }
+
+        const OpeningDetectionResult &best = results.front();
+        const QString message = QString("%1\n\nOverall %2% | Shape %3% | Color %4%\n\nAdd this opener to the editor?")
+                                    .arg(best.displayName())
+                                    .arg(best.overallScore() * 100.0, 0, 'f', 1)
+                                    .arg(best.occupancyScore * 100.0, 0, 'f', 1)
+                                    .arg(best.colorScore * 100.0, 0, 'f', 1);
+        QMessageBox box(QMessageBox::Question, "Opener Match Found", message, QMessageBox::NoButton, this);
+        auto *addButton = box.addButton("Add to Editor", QMessageBox::AcceptRole);
+        box.addButton("Close", QMessageBox::RejectRole);
+        box.exec();
+        if (box.clickedButton() == addButton) {
+            loadDetectedOpening(best);
         }
     }
 
