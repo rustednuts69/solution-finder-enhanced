@@ -1370,18 +1370,15 @@ private:
         return topOccupied == kRows ? 1 : kRows - topOccupied;
     }
 
-    void convertCurrentPageToSetupColors() {
+    void convertFumenToSetupGray() {
         if (!board_) {
             return;
         }
         syncCurrentPageFromBoard();
         ensureFumenState();
-        auto &page = fumenPages_[currentFumenPage_];
-        for (int row = 0; row < kRows; ++row) {
-            for (int col = 0; col < kColumns; ++col) {
-                const int index = (kVisibleTopRow + row) * kColumns + col;
-                const int value = page[index];
-                if (value != 0 && value != 1 && value != 3 && value != 8) {
+        for (auto &page : fumenPages_) {
+            for (int index = 0; index < kFumenBlocks; ++index) {
+                if (page[index] != 0 && page[index] != 8) {
                     page[index] = 8;
                 }
             }
@@ -1426,8 +1423,11 @@ private:
         if (spinMode && linesSpin_->value() > 3) {
             linesSpin_->setValue(2);
         }
+        if (setupMode && !setupModeActive_) {
+            convertFumenToSetupGray();
+        }
+        setupModeActive_ = setupMode;
         if (setupMode) {
-            convertCurrentPageToSetupColors();
             linesSpin_->setValue(qMin(12, autoCommandHeight()));
             if (board_ && board_->paintValue() != 1 && board_->paintValue() != 3 && board_->paintValue() != 8) {
                 selectPaint(8);
@@ -1690,6 +1690,12 @@ private:
             return;
         }
         replaceFumenPages(decoded->pages, decoded->operations);
+        if (commandBox_ && commandBox_->currentText() == "setup") {
+            convertFumenToSetupGray();
+            if (linesSpin_) {
+                linesSpin_->setValue(qMin(12, autoCommandHeight()));
+            }
+        }
         updateGeneratedField();
     }
 
@@ -2468,6 +2474,12 @@ pre, code {
                 const auto decoded = decodeFumenV115(opener.code);
                 if (decoded.has_value()) {
                     replaceFumenPages(decoded->pages, decoded->operations);
+                    if (commandBox_ && commandBox_->currentText() == "setup") {
+                        convertFumenToSetupGray();
+                        if (linesSpin_) {
+                            linesSpin_->setValue(qMin(12, autoCommandHeight()));
+                        }
+                    }
                     outputEdit_->appendPlainText(QString("Loaded opener: %1 - %2 (%3 page%4)")
                                                      .arg(opener.openerName, opener.variationName)
                                                      .arg(decoded->pageCount)
@@ -2510,7 +2522,6 @@ pre, code {
             error->clear();
         }
         syncCurrentPageFromBoard();
-        convertCurrentPageToSetupColors();
         const auto &cells = board_->cells();
         const int height = autoCommandHeight();
         if (linesSpin_) {
@@ -2792,6 +2803,7 @@ pre, code {
     bool updatingFumenControls_ = false;
     bool loadingOpeners_ = false;
     bool showingOutputFileContent_ = false;
+    bool setupModeActive_ = false;
     QProcess *process_ = nullptr;
 };
 
