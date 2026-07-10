@@ -19,11 +19,30 @@ set are still expected follow-up work in this Qt port.
 
 ## Build And Run On Linux
 
-Debian/Ubuntu copy and paste:
+Install dependencies for your distro first.
+
+Debian/Ubuntu:
 
 ```sh
 sudo apt update
 sudo apt install -y git cmake g++ qt6-base-dev default-jre
+```
+
+Fedora:
+
+```sh
+sudo dnf install -y git cmake gcc-c++ qt6-qtbase-devel java-latest-openjdk
+```
+
+Arch/Manjaro:
+
+```sh
+sudo pacman -S --needed git cmake gcc qt6-base jre-openjdk
+```
+
+Then build and run:
+
+```sh
 git clone --branch codex/linux-ui https://github.com/rustednuts69/solution-finder-enhanced.git
 cd solution-finder-enhanced/platforms/linux-qt
 cmake -S . -B build
@@ -43,11 +62,3 @@ cmake --build build
 The app discovers the repository root by looking for `shared/openers.json`, so
 run it from inside a clone of `solution-finder-enhanced` while this port is
 early.
-
-## Fedora
-
-Package names vary by distro. On Fedora, the dependency step is usually:
-
-```sh
-sudo dnf install git cmake gcc-c++ qt6-qtbase-devel java-latest-openjdk
-```
