@@ -45,12 +45,13 @@ sudo pacman -S --needed git cmake gcc qt6-base jre-openjdk
 ```
 
 Screenshot import uses your desktop's region screenshot tool instead of drawing
-its own capture overlay. Install one of these if your desktop does not already
-include one:
+its own capture overlay. `flameshot` is recommended because it works across more
+desktop setups than `gnome-screenshot` or `scrot`. Install one of these if your
+desktop does not already include one:
 
 ```sh
 # Debian/Ubuntu examples
-sudo apt install -y gnome-screenshot
+sudo apt install -y flameshot
 # Wayland/wlroots users can use:
 sudo apt install -y grim slurp
 ```

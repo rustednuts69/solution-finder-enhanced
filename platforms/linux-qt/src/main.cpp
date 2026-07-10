@@ -449,9 +449,9 @@ std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
         return std::nullopt;
     };
 
-    const QString gnomeScreenshot = findProgram("gnome-screenshot");
-    if (!gnomeScreenshot.isEmpty()) {
-        if (const auto image = tryTool("gnome-screenshot", gnomeScreenshot, {"-a", "-f", path}); image.has_value()) {
+    const QString flameshot = findProgram("flameshot");
+    if (!flameshot.isEmpty()) {
+        if (const auto image = tryTool("flameshot", flameshot, {"gui", "-p", path}); image.has_value()) {
             return image;
         }
     }
@@ -467,16 +467,16 @@ std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
         }
     }
 
-    const QString spectacle = findProgram("spectacle");
-    if (!spectacle.isEmpty()) {
-        if (const auto image = tryTool("spectacle", spectacle, {"-r", "-b", "-n", "-o", path}); image.has_value()) {
+    const QString gnomeScreenshot = findProgram("gnome-screenshot");
+    if (!gnomeScreenshot.isEmpty()) {
+        if (const auto image = tryTool("gnome-screenshot", gnomeScreenshot, {"-a", "-f", path}); image.has_value()) {
             return image;
         }
     }
 
-    const QString flameshot = findProgram("flameshot");
-    if (!flameshot.isEmpty()) {
-        if (const auto image = tryTool("flameshot", flameshot, {"gui", "-p", path}); image.has_value()) {
+    const QString spectacle = findProgram("spectacle");
+    if (!spectacle.isEmpty()) {
+        if (const auto image = tryTool("spectacle", spectacle, {"-r", "-b", "-n", "-o", path}); image.has_value()) {
             return image;
         }
     }
