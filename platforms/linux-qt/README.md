@@ -9,16 +9,29 @@ can move forward without disturbing the working macOS version.
 - Native Qt Widgets layout
 - 10x20 editable board with click and drag painting
 - Opener group and variation selector from `shared/openers.json`
+- Native fumen page controls, mino placement controls, and fumen output code
 - Core sfinder command controls
 - Process runner for the bundled `solution-finder-1.43/sfinder.jar`
 - Command output pane
 
-Fumen decoding/encoding, screenshot import, playable mode, output preview, and
-the full advanced settings set are still expected follow-up work.
+Screenshot import, playable mode, output preview, and the full advanced settings
+set are still expected follow-up work in this Qt port.
 
-## Build On Linux
+## Build And Run On Linux
 
-Install Qt 6 development packages and CMake, then run:
+Debian/Ubuntu copy and paste:
+
+```sh
+sudo apt update
+sudo apt install -y git cmake g++ qt6-base-dev default-jre
+git clone --branch codex/linux-ui https://github.com/rustednuts69/solution-finder-enhanced.git
+cd solution-finder-enhanced/platforms/linux-qt
+cmake -S . -B build
+cmake --build build
+./build/solution-finder-enhanced-qt
+```
+
+If you already cloned the repository, run:
 
 ```sh
 cd platforms/linux-qt
@@ -27,12 +40,14 @@ cmake --build build
 ./build/solution-finder-enhanced-qt
 ```
 
-On Debian/Ubuntu-style systems, the packages are usually similar to:
-
-```sh
-sudo apt install cmake g++ qt6-base-dev default-jre
-```
-
 The app discovers the repository root by looking for `shared/openers.json`, so
 run it from inside a clone of `solution-finder-enhanced` while this port is
 early.
+
+## Fedora
+
+Package names vary by distro. On Fedora, the dependency step is usually:
+
+```sh
+sudo dnf install git cmake gcc-c++ qt6-qtbase-devel java-latest-openjdk
+```

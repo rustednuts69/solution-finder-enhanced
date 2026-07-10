@@ -9,12 +9,10 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$SCRIPT_DIR"
-if [ ! -x "$SCRIPT_DIR/.build/release/SolutionFinderEnhanced" ]; then
-  export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/build/swift-module-cache"
-  export SWIFTPM_CACHE_PATH="$ROOT_DIR/build/swiftpm-cache"
-  mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_CACHE_PATH"
-  swift build -c release
-fi
+export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/build/swift-module-cache"
+export SWIFTPM_CACHE_PATH="$ROOT_DIR/build/swiftpm-cache"
+mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_CACHE_PATH"
+swift build -c release
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"

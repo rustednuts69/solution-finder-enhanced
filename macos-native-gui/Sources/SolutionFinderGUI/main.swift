@@ -5219,30 +5219,34 @@ struct FumenEditorPane: View {
                                 .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
                             }
                             VStack(alignment: .leading, spacing: 8) {
-                                Button(role: .destructive) {
-                                    model.deletePreviousFumenPages()
-                                    commitAction()
-                                } label: {
-                                    Text("Trim Pages Before")
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .disabled(model.currentFumenPage == 0)
-
-                                Button(role: .destructive) {
-                                    model.deleteFollowingFumenPages()
-                                    commitAction()
-                                } label: {
-                                    Text("Trim Pages After")
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
-
                                 Button {
                                     model.addFumenPage()
                                     commitAction()
                                 } label: {
                                     Label("Add", systemImage: "plus")
+                                        .frame(maxWidth: .infinity, alignment: .center)
                                 }
+
+                                HStack(spacing: 8) {
+                                    Button(role: .destructive) {
+                                        model.deletePreviousFumenPages()
+                                        commitAction()
+                                    } label: {
+                                        Label("Trim Before", systemImage: "scissors")
+                                            .frame(maxWidth: .infinity, alignment: .center)
+                                    }
+                                    .disabled(model.currentFumenPage == 0)
+
+                                    Button(role: .destructive) {
+                                        model.deleteFollowingFumenPages()
+                                        commitAction()
+                                    } label: {
+                                        Label("Trim After", systemImage: "scissors")
+                                            .frame(maxWidth: .infinity, alignment: .center)
+                                    }
+                                    .disabled(model.currentFumenPage >= model.fumenPages.count - 1)
+                                }
+                                .controlSize(.small)
                             }
                             TextField("Comment", text: $model.fumenComment)
                                 .textFieldStyle(.roundedBorder)
