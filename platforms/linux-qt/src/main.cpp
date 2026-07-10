@@ -43,6 +43,7 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextStream>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QStyleFactory>
@@ -360,11 +361,11 @@ public:
         : QWidget(parent), rubberBand_(new QRubberBand(QRubberBand::Rectangle, this)) {
         setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
         setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_NoSystemBackground);
         setCursor(Qt::CrossCursor);
         if (QScreen *screen = QGuiApplication::primaryScreen()) {
             screen_ = screen;
             setGeometry(screen->geometry());
-            background_ = screen->grabWindow(0);
         }
     }
 
@@ -383,10 +384,7 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter painter(this);
-        if (!background_.isNull()) {
-            painter.drawPixmap(rect(), background_);
-        }
-        painter.fillRect(rect(), QColor(0, 0, 0, 96));
+        painter.fillRect(rect(), QColor(255, 255, 255, 28));
     }
 
     void keyPressEvent(QKeyEvent *event) override {
@@ -411,20 +409,26 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override {
         const QRect localRect = rubberBand_->geometry().normalized();
         rubberBand_->hide();
-        if (localRect.width() >= 10 && localRect.height() >= 10 && screen_) {
-            const QRect globalRect = localRect.translated(geometry().topLeft());
-            result_ = screen_->grabWindow(0, globalRect.x(), globalRect.y(), globalRect.width(), globalRect.height()).toImage();
+        selection_ = localRect.translated(geometry().topLeft());
+        hide();
+        if (selection_.width() < 10 || selection_.height() < 10 || !screen_) {
+            loop_.quit();
+            close();
+            return;
         }
-        loop_.quit();
-        close();
+        QTimer::singleShot(120, this, [this]() {
+            result_ = screen_->grabWindow(0, selection_.x(), selection_.y(), selection_.width(), selection_.height()).toImage();
+            loop_.quit();
+            close();
+        });
     }
 
 private:
     QEventLoop loop_;
     QRubberBand *rubberBand_ = nullptr;
     QScreen *screen_ = nullptr;
-    QPixmap background_;
     QPoint origin_;
+    QRect selection_;
     std::optional<QImage> result_;
 };
 
