@@ -33,6 +33,7 @@
 #include <QTemporaryDir>
 #include <QTextBrowser>
 #include <QTextStream>
+#include <QDirIterator>
 #include <QVBoxLayout>
 #include <QStyleFactory>
 
@@ -1547,17 +1548,46 @@ private:
         const QString current = outputFileBox_->currentData().toString();
         outputFileBox_->blockSignals(true);
         outputFileBox_->clear();
+        outputFileBox_->addItem("Command Output", "__command_output__");
 
-        QDir dir(QDir(appDataDir()).filePath("run"));
-        const QFileInfoList files = dir.entryInfoList(QDir::Files, QDir::Time);
-        for (const QFileInfo &file : files) {
-            if (file.fileName().startsWith("qt_output")) {
-                outputFileBox_->addItem(file.fileName(), file.absoluteFilePath());
+        QFileInfoList discovered;
+        const QStringList roots = {
+            QDir(appDataDir()).filePath("run"),
+            repoRoot_ + "/output",
+            repoRoot_ + "/solution-finder-1.43/output",
+            repoRoot_ + "/native-macos/output"
+        };
+        for (const QString &root : roots) {
+            QDir dir(root);
+            if (!dir.exists()) {
+                continue;
+            }
+            QDirIterator it(root, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QFileInfo file(it.next());
+                const QString name = file.fileName();
+                const QString suffix = file.suffix().toLower();
+                if (name == "field.txt" || name == "patterns.txt") {
+                    continue;
+                }
+                if (name.startsWith("qt_output") || suffix == "html" || suffix == "csv" || suffix == "txt") {
+                    discovered.push_back(file);
+                }
             }
         }
-        if (outputFileBox_->count() == 0) {
-            outputFileBox_->addItem("No generated files yet", "");
+        std::sort(discovered.begin(), discovered.end(), [](const QFileInfo &lhs, const QFileInfo &rhs) {
+            return lhs.lastModified() > rhs.lastModified();
+        });
+        QStringList seenPaths;
+        for (const QFileInfo &file : discovered) {
+            const QString path = file.absoluteFilePath();
+            if (seenPaths.contains(path)) {
+                continue;
+            }
+            seenPaths << path;
+            outputFileBox_->addItem(file.fileName(), path);
         }
+
         const int index = outputFileBox_->findData(current);
         if (index >= 0) {
             outputFileBox_->setCurrentIndex(index);
@@ -1571,8 +1601,8 @@ private:
             return;
         }
         const QString path = outputFileBox_->currentData().toString();
-        if (path.isEmpty()) {
-            centerOutputBrowser_->setPlainText("Run a command that creates output files, then click Refresh.");
+        if (path == "__command_output__" || path.isEmpty()) {
+            centerOutputBrowser_->setPlainText(outputEdit_ ? outputEdit_->toPlainText() : "Run a command, then click Refresh.");
             return;
         }
         QFile file(path);
@@ -1647,6 +1677,7 @@ private:
         if (!decoded.has_value()) {
             return;
         }
+        currentPreviewCode_ = code;
         previewPages_ = decoded->pages;
         previewOperations_ = decoded->operations;
         currentPreviewPage_ = 0;
@@ -1674,10 +1705,31 @@ private:
 
     void sendPreviewToEditor() {
         if (previewPages_.empty()) {
-            return;
+            loadPreviewCode(previewCodeBox_ ? previewCodeBox_->currentText() : QString());
+        }
+        if (previewPages_.empty()) {
+            std::array<int, kFumenBlocks> page{};
+            page.fill(0);
+            const auto visible = previewBoard_ ? previewBoard_->cells() : std::array<int, kColumns * kRows>{};
+            for (int row = 0; row < kRows; ++row) {
+                for (int col = 0; col < kColumns; ++col) {
+                    page[(kVisibleTopRow + row) * kColumns + col] = visible[row * kColumns + col];
+                }
+            }
+            previewPages_ = {page};
+            previewOperations_ = {FumenOperation()};
         }
         replaceFumenPages(previewPages_, previewOperations_);
-        updateFumenCodeFromPages();
+        if (!currentPreviewCode_.isEmpty() && fumenEdit_) {
+            updatingFumenEdit_ = true;
+            fumenEdit_->setPlainText(currentPreviewCode_);
+            updatingFumenEdit_ = false;
+        } else {
+            updateFumenCodeFromPages();
+        }
+        if (outputEdit_) {
+            outputEdit_->appendPlainText("Preview sent to editor.");
+        }
     }
 
     int pieceTypeFromChar(QChar ch) const {
@@ -2150,6 +2202,15 @@ private:
 
         outputEdit_->clear();
         outputEdit_->appendPlainText("$ " + program + " " + args.join(" "));
+        if (outputFileBox_) {
+            const int commandIndex = outputFileBox_->findData("__command_output__");
+            if (commandIndex >= 0) {
+                outputFileBox_->setCurrentIndex(commandIndex);
+            }
+        }
+        if (centerOutputBrowser_) {
+            centerOutputBrowser_->setPlainText(outputEdit_->toPlainText());
+        }
 
         process_ = new QProcess(this);
         process_->setWorkingDirectory(repoRoot_);
@@ -2157,6 +2218,9 @@ private:
 
         connect(process_, &QProcess::readyReadStandardOutput, this, [this]() {
             outputEdit_->appendPlainText(QString::fromLocal8Bit(process_->readAllStandardOutput()));
+            if (centerOutputBrowser_ && outputFileBox_ && outputFileBox_->currentData().toString() == "__command_output__") {
+                centerOutputBrowser_->setPlainText(outputEdit_->toPlainText());
+            }
         });
         connect(process_, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
             outputEdit_->appendPlainText(QString("\nProcess finished: exit %1 (%2)")
@@ -2233,6 +2297,7 @@ private:
     std::mt19937 rng_{std::random_device{}()};
     std::vector<std::array<int, kFumenBlocks>> previewPages_;
     std::vector<FumenOperation> previewOperations_;
+    QString currentPreviewCode_;
     int currentPreviewPage_ = 0;
     FumenOperation currentOperation_;
     int currentFumenPage_ = 0;
