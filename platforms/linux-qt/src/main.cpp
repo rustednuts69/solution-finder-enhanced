@@ -2062,10 +2062,12 @@ pre, code {
         if (!code.isEmpty() && previewCodeBox_->findText(code) < 0) {
             previewCodeBox_->blockSignals(true);
             previewCodeBox_->insertItem(0, code);
-            previewCodeBox_->setCurrentIndex(0);
+            if (currentPreviewCode_.isEmpty()) {
+                previewCodeBox_->setCurrentIndex(0);
+            }
             previewCodeBox_->blockSignals(false);
         }
-        if (!code.isEmpty()) {
+        if (!code.isEmpty() && currentPreviewCode_.isEmpty()) {
             loadPreviewCode(code);
         } else {
             updatePreviewBoard();
@@ -2109,6 +2111,9 @@ pre, code {
             appendRawOutput("\nNo fumen code found in link: " + url.toString() + "\n");
             return;
         }
+        if (sectionTabs_) {
+            sectionTabs_->setCurrentIndex(3);
+        }
         if (previewCodeBox_) {
             previewCodeBox_->blockSignals(true);
             int index = previewCodeBox_->findText(code);
@@ -2120,9 +2125,6 @@ pre, code {
             previewCodeBox_->blockSignals(false);
         }
         loadPreviewCode(code);
-        if (sectionTabs_) {
-            sectionTabs_->setCurrentIndex(3);
-        }
     }
 
     void loadPreviewCode(QString code) {
