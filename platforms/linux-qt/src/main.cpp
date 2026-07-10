@@ -2,7 +2,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -16,6 +18,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QPalette>
@@ -32,8 +35,9 @@
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextStream>
-#include <QDirIterator>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QStyleFactory>
 
@@ -627,13 +631,11 @@ private:
         linesSpin_->setRange(1, 20);
         linesSpin_->setValue(4);
         patternsEdit_ = new QLineEdit("t,*p5", commandGroup);
-        verboseCheck_ = new QCheckBox("Verbose output", commandGroup);
         form->addRow("Command", commandBox_);
         form->addRow("Hold", holdBox_);
         form->addRow("Drop", dropBox_);
         form->addRow("Lines", linesSpin_);
         form->addRow("Patterns", patternsEdit_);
-        form->addRow("", verboseCheck_);
         layout->addWidget(commandGroup);
 
         auto *paintGroup = new QGroupBox("Paint", panel);
@@ -709,18 +711,18 @@ private:
         titleRow->addLayout(titleBlock);
         titleRow->addStretch(1);
 
-        auto *sectionTabs = new QTabBar(panel);
-        sectionTabs->setObjectName("sectionTabs");
-        sectionTabs->addTab("Editor");
-        sectionTabs->addTab("Play");
-        sectionTabs->addTab("Output");
-        sectionTabs->addTab("Preview");
-        sectionTabs->setExpanding(false);
-        titleRow->addWidget(sectionTabs);
+        sectionTabs_ = new QTabBar(panel);
+        sectionTabs_->setObjectName("sectionTabs");
+        sectionTabs_->addTab("Editor");
+        sectionTabs_->addTab("Play");
+        sectionTabs_->addTab("Output");
+        sectionTabs_->addTab("Preview");
+        sectionTabs_->setExpanding(false);
+        titleRow->addWidget(sectionTabs_);
         layout->addLayout(titleRow);
 
-        auto *stack = new QStackedWidget(panel);
-        auto *editorPage = new QWidget(stack);
+        centerStack_ = new QStackedWidget(panel);
+        auto *editorPage = new QWidget(centerStack_);
         auto *editorLayout = new QVBoxLayout(editorPage);
         editorLayout->setContentsMargins(0, 0, 0, 0);
         editorLayout->setSpacing(8);
@@ -761,14 +763,14 @@ private:
         editorLayout->addWidget(new QLabel("Generated sfinder Field", panel));
         editorLayout->addWidget(generatedField_);
 
-        stack->addWidget(editorPage);
-        stack->addWidget(buildPlayPage(stack));
-        stack->addWidget(buildCenterOutputPage(stack));
-        stack->addWidget(buildPreviewPage(stack));
-        layout->addWidget(stack, 1);
+        centerStack_->addWidget(editorPage);
+        centerStack_->addWidget(buildPlayPage(centerStack_));
+        centerStack_->addWidget(buildCenterOutputPage(centerStack_));
+        centerStack_->addWidget(buildPreviewPage(centerStack_));
+        layout->addWidget(centerStack_, 1);
 
-        connect(sectionTabs, &QTabBar::currentChanged, this, [this, stack](int index) {
-            stack->setCurrentIndex(index);
+        connect(sectionTabs_, &QTabBar::currentChanged, this, [this](int index) {
+            centerStack_->setCurrentIndex(index);
             if (index == 1) {
                 playBoard_->setFocus();
             } else if (index == 2) {
@@ -982,6 +984,7 @@ private:
 
         auto *toolbar = new QHBoxLayout();
         outputFileBox_ = new QComboBox(page);
+        outputFileBox_->addItem("Command Output", "__command_output__");
         auto *refreshButton = new QPushButton("Refresh", page);
         toolbar->addWidget(new QLabel("Generated File", page));
         toolbar->addWidget(outputFileBox_, 1);
@@ -1072,31 +1075,78 @@ private:
     }
 
     QWidget *buildOutputPanel() {
-        auto *tabs = new QTabWidget(this);
-        tabs->setMinimumWidth(320);
-        outputEdit_ = new QPlainTextEdit(tabs);
-        outputEdit_->setReadOnly(true);
-        outputEdit_->setStyleSheet("font-family: 'Menlo', 'SF Mono', 'DejaVu Sans Mono', monospace; font-size: 13px;");
-        tabs->addTab(outputEdit_, "Command Output");
+        auto *panel = new QWidget(this);
+        panel->setMinimumWidth(320);
+        auto *layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setSpacing(12);
 
-        auto *tips = new QPlainTextEdit(tabs);
-        tips->setReadOnly(true);
-        tips->setPlainText(
-            "Qt port status\n"
-            "\n"
-            "- This shell is native Qt Widgets, not a browser UI.\n"
-            "- Board edits produce an sfinder field file.\n"
-            "- Opener selection loads fumen codes and pages into the native editor.\n"
-            "- The center Play, Output, and Preview tabs are early native ports.\n"
-            "- Screenshot import and advanced settings are still expected follow-up work.\n"
-            "\n"
-            "Pattern examples\n"
-            "\n"
-            "t,*p5       T first, then any 5 pieces\n"
-            "*p7,*p7     two 7-bag chunks\n"
-            "I,O,T       explicit queue\n");
-        tabs->addTab(tips, "Notes");
-        return tabs;
+        auto *header = new QHBoxLayout();
+        auto *title = new QLabel("Command Output", panel);
+        title->setObjectName("paneTitle");
+        verboseCheck_ = new QCheckBox("Verbose", panel);
+        auto *clearButton = new QPushButton("Clear", panel);
+        header->addWidget(title);
+        header->addStretch(1);
+        header->addWidget(verboseCheck_);
+        header->addWidget(clearButton);
+        layout->addLayout(header);
+
+        outputEdit_ = new QPlainTextEdit(panel);
+        outputEdit_->setReadOnly(true);
+        outputEdit_->setPlaceholderText("Run a search to see output here.");
+        outputEdit_->setStyleSheet("font-family: 'Menlo', 'SF Mono', 'DejaVu Sans Mono', monospace; font-size: 13px;");
+        layout->addWidget(outputEdit_, 1);
+
+        auto *filesGroup = new QGroupBox("Generated Files", panel);
+        auto *filesLayout = new QVBoxLayout(filesGroup);
+        filesLayout->setSpacing(8);
+
+        auto *filesHeader = new QHBoxLayout();
+        auto *refreshButton = new QPushButton("Refresh", filesGroup);
+        filesHeader->addStretch(1);
+        filesHeader->addWidget(refreshButton);
+        filesLayout->addLayout(filesHeader);
+
+        outputFilesList_ = new QListWidget(filesGroup);
+        outputFilesList_->setMinimumHeight(92);
+        filesLayout->addWidget(outputFilesList_, 1);
+
+        auto *fileActions = new QHBoxLayout();
+        auto *previewButton = new QPushButton("Preview", filesGroup);
+        auto *openButton = new QPushButton("Open", filesGroup);
+        auto *openFolderButton = new QPushButton("Open Folder", filesGroup);
+        fileActions->addWidget(previewButton);
+        fileActions->addWidget(openButton);
+        fileActions->addWidget(openFolderButton);
+        filesLayout->addLayout(fileActions);
+        layout->addWidget(filesGroup, 0);
+
+        connect(verboseCheck_, &QCheckBox::toggled, this, [this]() {
+            refreshDisplayedOutput();
+        });
+        connect(clearButton, &QPushButton::clicked, this, [this]() {
+            showingOutputFileContent_ = false;
+            rawOutputLog_.clear();
+            refreshDisplayedOutput();
+        });
+        connect(refreshButton, &QPushButton::clicked, this, [this]() {
+            refreshGeneratedFiles();
+        });
+        connect(previewButton, &QPushButton::clicked, this, [this]() {
+            previewSelectedOutputFile();
+        });
+        connect(openButton, &QPushButton::clicked, this, [this]() {
+            openSelectedOutputFile();
+        });
+        connect(openFolderButton, &QPushButton::clicked, this, [this]() {
+            openOutputFolder();
+        });
+        connect(outputFilesList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *) {
+            openSelectedOutputFile();
+        });
+
+        return panel;
     }
 
     void ensureFumenState() {
@@ -1541,15 +1591,17 @@ private:
         return visible;
     }
 
-    void refreshGeneratedFiles() {
-        if (!outputFileBox_) {
-            return;
+    QString formatByteSize(qint64 size) const {
+        if (size >= 1024 * 1024) {
+            return QString::number(size / (1024.0 * 1024.0), 'f', 1) + " MB";
         }
-        const QString current = outputFileBox_->currentData().toString();
-        outputFileBox_->blockSignals(true);
-        outputFileBox_->clear();
-        outputFileBox_->addItem("Command Output", "__command_output__");
+        if (size >= 1024) {
+            return QString::number(size / 1024.0, 'f', 1) + " KB";
+        }
+        return QString::number(size) + " bytes";
+    }
 
+    QFileInfoList discoverGeneratedFiles() const {
         QFileInfoList discovered;
         const QStringList roots = {
             QDir(appDataDir()).filePath("run"),
@@ -1570,7 +1622,7 @@ private:
                 if (name == "field.txt" || name == "patterns.txt") {
                     continue;
                 }
-                if (name.startsWith("qt_output") || suffix == "html" || suffix == "csv" || suffix == "txt") {
+                if (name.startsWith("qt_output") || suffix == "html" || suffix == "csv" || suffix == "txt" || suffix == "log") {
                     discovered.push_back(file);
                 }
             }
@@ -1578,6 +1630,21 @@ private:
         std::sort(discovered.begin(), discovered.end(), [](const QFileInfo &lhs, const QFileInfo &rhs) {
             return lhs.lastModified() > rhs.lastModified();
         });
+        return discovered;
+    }
+
+    void refreshGeneratedFiles() {
+        const QString current = outputFileBox_ ? outputFileBox_->currentData().toString() : QString();
+        if (outputFileBox_) {
+            outputFileBox_->blockSignals(true);
+            outputFileBox_->clear();
+            outputFileBox_->addItem("Command Output", "__command_output__");
+        }
+        if (outputFilesList_) {
+            outputFilesList_->clear();
+        }
+
+        const QFileInfoList discovered = discoverGeneratedFiles();
         QStringList seenPaths;
         for (const QFileInfo &file : discovered) {
             const QString path = file.absoluteFilePath();
@@ -1585,15 +1652,27 @@ private:
                 continue;
             }
             seenPaths << path;
-            outputFileBox_->addItem(file.fileName(), path);
+            if (outputFileBox_) {
+                outputFileBox_->addItem(file.fileName(), path);
+            }
+            if (outputFilesList_) {
+                auto *item = new QListWidgetItem(file.fileName() + "\n" + formatByteSize(file.size()), outputFilesList_);
+                item->setData(Qt::UserRole, path);
+                item->setToolTip(path);
+            }
+        }
+        if (outputFilesList_ && outputFilesList_->count() > 0 && !outputFilesList_->currentItem()) {
+            outputFilesList_->setCurrentRow(0);
         }
 
-        const int index = outputFileBox_->findData(current);
-        if (index >= 0) {
-            outputFileBox_->setCurrentIndex(index);
+        if (outputFileBox_) {
+            const int index = outputFileBox_->findData(current);
+            if (index >= 0) {
+                outputFileBox_->setCurrentIndex(index);
+            }
+            outputFileBox_->blockSignals(false);
+            showSelectedGeneratedFile();
         }
-        outputFileBox_->blockSignals(false);
-        showSelectedGeneratedFile();
     }
 
     void showSelectedGeneratedFile() {
@@ -1602,7 +1681,7 @@ private:
         }
         const QString path = outputFileBox_->currentData().toString();
         if (path == "__command_output__" || path.isEmpty()) {
-            centerOutputBrowser_->setPlainText(outputEdit_ ? outputEdit_->toPlainText() : "Run a command, then click Refresh.");
+            centerOutputBrowser_->setPlainText(displayedOutputText().isEmpty() ? "Run a command, then click Refresh." : displayedOutputText());
             return;
         }
         QFile file(path);
@@ -1617,6 +1696,166 @@ private:
             centerOutputBrowser_->setPlainText(content);
         }
         extractPreviewCodes(content);
+    }
+
+    QString selectedOutputFilePath() const {
+        if (!outputFilesList_ || !outputFilesList_->currentItem()) {
+            return QString();
+        }
+        return outputFilesList_->currentItem()->data(Qt::UserRole).toString();
+    }
+
+    void previewSelectedOutputFile() {
+        const QString path = selectedOutputFilePath();
+        if (path.isEmpty()) {
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            rawOutputLog_ = "Could not open " + path + "\n";
+            refreshDisplayedOutput();
+            return;
+        }
+        showingOutputFileContent_ = true;
+        rawOutputLog_ = QString::fromUtf8(file.readAll());
+        refreshDisplayedOutput();
+    }
+
+    void openSelectedOutputFile() {
+        const QString path = selectedOutputFilePath();
+        if (path.isEmpty()) {
+            return;
+        }
+        const QString suffix = QFileInfo(path).suffix().toLower();
+        if (suffix == "html" || suffix == "htm") {
+            if (outputFileBox_) {
+                int index = outputFileBox_->findData(path);
+                if (index < 0) {
+                    outputFileBox_->addItem(QFileInfo(path).fileName(), path);
+                    index = outputFileBox_->findData(path);
+                }
+                outputFileBox_->setCurrentIndex(index);
+            }
+            if (sectionTabs_) {
+                sectionTabs_->setCurrentIndex(2);
+            }
+            showSelectedGeneratedFile();
+            return;
+        }
+        if (suffix == "txt" || suffix == "csv" || suffix == "tsv" || suffix == "log" || suffix.isEmpty()) {
+            previewSelectedOutputFile();
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    }
+
+    void openOutputFolder() {
+        const QString folder = QDir(appDataDir()).filePath("run");
+        QDir().mkpath(folder);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    }
+
+    bool isCompactResultLine(const QString &line) const {
+        return line.startsWith("success = ")
+            || line.startsWith("tetris = ")
+            || line.startsWith("Found solutions = ")
+            || line.startsWith("Found path ")
+            || line.startsWith("Found path[")
+            || line.startsWith("Found pattern ")
+            || line == "success:"
+            || line.startsWith("OR  = ")
+            || line.startsWith("AND = ")
+            || line == ">>>"
+            || line.startsWith("Failed")
+            || QRegularExpression("^\\d+(\\.\\d+)? % \\[\\d+/\\d+\\]:").match(line).hasMatch();
+    }
+
+    QString compactOutput(const QString &output) const {
+        QStringList compact;
+        bool includeSearchSection = false;
+        bool includeOutputSection = false;
+        const QStringList lines = output.split('\n');
+        for (const QString &line : lines) {
+            const QString trimmed = line.trimmed();
+            if (line.startsWith("Searching pattern size")) {
+                compact << line;
+                continue;
+            }
+            if (trimmed == "# Setup Field" || trimmed == "# Initialize / User-defined") {
+                if (!compact.isEmpty() && !compact.last().isEmpty()) {
+                    compact << "";
+                }
+                compact << line;
+                continue;
+            }
+            if (isCompactResultLine(trimmed)) {
+                compact << line;
+                continue;
+            }
+            if (line == "# Search") {
+                if (!compact.isEmpty() && !compact.last().isEmpty()) {
+                    compact << "";
+                }
+                compact << line;
+                includeSearchSection = true;
+                includeOutputSection = false;
+                continue;
+            }
+            if (line == "# Output") {
+                if (!compact.isEmpty() && !compact.last().isEmpty()) {
+                    compact << "";
+                }
+                compact << line;
+                includeSearchSection = false;
+                includeOutputSection = true;
+                continue;
+            }
+            if (includeSearchSection) {
+                if (line.startsWith("  -> Stopwatch")) {
+                    compact << line;
+                    continue;
+                }
+                if (line.startsWith("# ")) {
+                    includeSearchSection = false;
+                }
+            }
+            if (includeOutputSection) {
+                if (line.startsWith("# ") || line.startsWith("Success pattern tree") || line.startsWith("Tetris-ending PC pattern tree") || line == "-------------------") {
+                    includeOutputSection = false;
+                } else {
+                    compact << line;
+                    continue;
+                }
+            }
+        }
+        return compact.join('\n').trimmed();
+    }
+
+    QString displayedOutputText() const {
+        if (verboseCheck_ && verboseCheck_->isChecked()) {
+            return rawOutputLog_;
+        }
+        if (showingOutputFileContent_) {
+            return rawOutputLog_;
+        }
+        return compactOutput(rawOutputLog_);
+    }
+
+    void refreshDisplayedOutput() {
+        const QString text = displayedOutputText();
+        if (outputEdit_) {
+            outputEdit_->setPlainText(text);
+            outputEdit_->moveCursor(QTextCursor::End);
+        }
+        if (centerOutputBrowser_ && outputFileBox_ && outputFileBox_->currentData().toString() == "__command_output__") {
+            centerOutputBrowser_->setPlainText(text.isEmpty() ? "Run a search to see output here." : text);
+        }
+    }
+
+    void appendRawOutput(const QString &text) {
+        showingOutputFileContent_ = false;
+        rawOutputLog_ += text;
+        refreshDisplayedOutput();
     }
 
     void extractPreviewCodes(const QString &content) {
@@ -2200,32 +2439,28 @@ private:
         }
         args << buildSfinderArguments(fieldPath, patternsPath, outputBase);
 
-        outputEdit_->clear();
-        outputEdit_->appendPlainText("$ " + program + " " + args.join(" "));
+        showingOutputFileContent_ = false;
+        rawOutputLog_ = "$ " + program + " " + args.join(" ") + "\n\n";
+        refreshDisplayedOutput();
         if (outputFileBox_) {
             const int commandIndex = outputFileBox_->findData("__command_output__");
             if (commandIndex >= 0) {
                 outputFileBox_->setCurrentIndex(commandIndex);
             }
         }
-        if (centerOutputBrowser_) {
-            centerOutputBrowser_->setPlainText(outputEdit_->toPlainText());
-        }
+        refreshDisplayedOutput();
 
         process_ = new QProcess(this);
         process_->setWorkingDirectory(repoRoot_);
         process_->setProcessChannelMode(QProcess::MergedChannels);
 
         connect(process_, &QProcess::readyReadStandardOutput, this, [this]() {
-            outputEdit_->appendPlainText(QString::fromLocal8Bit(process_->readAllStandardOutput()));
-            if (centerOutputBrowser_ && outputFileBox_ && outputFileBox_->currentData().toString() == "__command_output__") {
-                centerOutputBrowser_->setPlainText(outputEdit_->toPlainText());
-            }
+            appendRawOutput(QString::fromLocal8Bit(process_->readAllStandardOutput()));
         });
         connect(process_, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
-            outputEdit_->appendPlainText(QString("\nProcess finished: exit %1 (%2)")
-                                             .arg(exitCode)
-                                             .arg(status == QProcess::NormalExit ? "normal" : "crashed"));
+            appendRawOutput(QString("\nProcess finished: exit %1 (%2)\n")
+                                .arg(exitCode)
+                                .arg(status == QProcess::NormalExit ? "normal" : "crashed"));
             process_->deleteLater();
             process_ = nullptr;
             runButton_->setEnabled(true);
@@ -2237,7 +2472,7 @@ private:
         cancelButton_->setEnabled(true);
         process_->start(program, args);
         if (!process_->waitForStarted(1000)) {
-            outputEdit_->appendPlainText("Failed to start sfinder process.");
+            appendRawOutput("Failed to start sfinder process.\n");
             process_->deleteLater();
             process_ = nullptr;
             runButton_->setEnabled(true);
@@ -2277,6 +2512,9 @@ private:
     QPlainTextEdit *fumenEdit_ = nullptr;
     QPlainTextEdit *generatedField_ = nullptr;
     QPlainTextEdit *outputEdit_ = nullptr;
+    QListWidget *outputFilesList_ = nullptr;
+    QTabBar *sectionTabs_ = nullptr;
+    QStackedWidget *centerStack_ = nullptr;
     BoardWidget *playBoard_ = nullptr;
     QLabel *playStatusLabel_ = nullptr;
     QLabel *playQueueLabel_ = nullptr;
@@ -2298,12 +2536,14 @@ private:
     std::vector<std::array<int, kFumenBlocks>> previewPages_;
     std::vector<FumenOperation> previewOperations_;
     QString currentPreviewCode_;
+    QString rawOutputLog_;
     int currentPreviewPage_ = 0;
     FumenOperation currentOperation_;
     int currentFumenPage_ = 0;
     bool updatingFumenEdit_ = false;
     bool updatingFumenControls_ = false;
     bool loadingOpeners_ = false;
+    bool showingOutputFileContent_ = false;
     QProcess *process_ = nullptr;
 };
 
