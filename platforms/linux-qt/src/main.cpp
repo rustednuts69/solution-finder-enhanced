@@ -442,6 +442,10 @@ public:
         paintValue_ = value;
     }
 
+    int paintValue() const {
+        return paintValue_;
+    }
+
     void mirror() {
         std::array<int, kColumns * kRows> next{};
         next.fill(0);
@@ -620,7 +624,7 @@ private:
         layout->setSpacing(12);
 
         auto *commandGroup = new QGroupBox("Search Settings", panel);
-        auto *form = new QFormLayout(commandGroup);
+        searchForm_ = new QFormLayout(commandGroup);
         commandBox_ = new QComboBox(commandGroup);
         commandBox_->addItems({"percent", "path", "tetris", "tetris-path", "setup", "cover", "ren", "spin"});
         holdBox_ = new QComboBox(commandGroup);
@@ -631,25 +635,26 @@ private:
         linesSpin_->setRange(1, 20);
         linesSpin_->setValue(4);
         patternsEdit_ = new QLineEdit("t,*p5", commandGroup);
-        form->addRow("Command", commandBox_);
-        form->addRow("Hold", holdBox_);
-        form->addRow("Drop", dropBox_);
-        form->addRow("Lines", linesSpin_);
-        form->addRow("Patterns", patternsEdit_);
+        searchForm_->addRow("Command", commandBox_);
+        searchForm_->addRow("Hold", holdBox_);
+        searchForm_->addRow("Drop", dropBox_);
+        searchForm_->addRow("Lines", linesSpin_);
+        searchForm_->addRow("Patterns", patternsEdit_);
         layout->addWidget(commandGroup);
 
-        auto *paintGroup = new QGroupBox("Paint", panel);
-        auto *paintLayout = new QGridLayout(paintGroup);
+        paintGroup_ = new QGroupBox("Paint", panel);
+        auto *paintLayout = new QGridLayout(paintGroup_);
         const std::vector<int> palette = {0, 8, 1, 2, 3, 4, 5, 6, 7};
         int column = 0;
         for (int value : palette) {
-            auto *button = new QPushButton(cellName(value), paintGroup);
+            auto *button = new QPushButton(cellName(value), paintGroup_);
             button->setCheckable(true);
             button->setMinimumHeight(34);
             button->setStyleSheet(QString(
                 "QPushButton { background: %1; color: %2; border: 1px solid #242424; border-radius: 5px; font-weight: 650; }"
                 "QPushButton:checked { border: 3px solid #0a84ff; }")
                                       .arg(cellColor(value).name(), value == 0 ? "#d8d8d8" : "#ffffff"));
+            paintValues_.push_back(value);
             paintButtons_.push_back(button);
             paintLayout->addWidget(button, column / 3, column % 3);
             connect(button, &QPushButton::clicked, this, [this, value]() {
@@ -657,7 +662,7 @@ private:
             });
             ++column;
         }
-        layout->addWidget(paintGroup);
+        layout->addWidget(paintGroup_);
 
         auto *openerGroup = new QGroupBox("Openers", panel);
         auto *openerLayout = new QFormLayout(openerGroup);
@@ -683,6 +688,9 @@ private:
         connect(openerVariationBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             loadSelectedOpener();
         });
+        connect(commandBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            updateCommandUi();
+        });
         connect(runButton_, &QPushButton::clicked, this, [this]() {
             runSearch();
         });
@@ -691,6 +699,7 @@ private:
         });
 
         selectPaint(8);
+        updateCommandUi();
         return panel;
     }
 
@@ -740,6 +749,9 @@ private:
         board_ = new BoardWidget(panel);
         board_->onChanged = [this]() {
             syncCurrentPageFromBoard();
+            if (commandBox_ && commandBox_->currentText() == "setup" && linesSpin_) {
+                linesSpin_->setValue(qMin(12, autoCommandHeight()));
+            }
             updateGeneratedField();
             updateFumenCodeFromPages();
         };
@@ -800,10 +812,10 @@ private:
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(10);
 
-        auto *minoGroup = new QGroupBox("Mino", panel);
-        auto *minoLayout = new QVBoxLayout(minoGroup);
-        placeMinoCheck_ = new QCheckBox("Place mino", minoGroup);
-        minoPieceBox_ = new QComboBox(minoGroup);
+        minoGroup_ = new QGroupBox("Mino", panel);
+        auto *minoLayout = new QVBoxLayout(minoGroup_);
+        placeMinoCheck_ = new QCheckBox("Place mino", minoGroup_);
+        minoPieceBox_ = new QComboBox(minoGroup_);
         minoPieceBox_->addItem("I", 1);
         minoPieceBox_->addItem("L", 2);
         minoPieceBox_->addItem("O", 3);
@@ -814,45 +826,45 @@ private:
         minoLayout->addWidget(placeMinoCheck_);
         minoLayout->addWidget(minoPieceBox_);
         auto *rotateRow = new QHBoxLayout();
-        auto *ccwButton = new QPushButton("CCW", minoGroup);
-        auto *cwButton = new QPushButton("CW", minoGroup);
-        auto *clearMinoButton = new QPushButton("Clear", minoGroup);
+        auto *ccwButton = new QPushButton("CCW", minoGroup_);
+        auto *cwButton = new QPushButton("CW", minoGroup_);
+        auto *clearMinoButton = new QPushButton("Clear", minoGroup_);
         rotateRow->addWidget(ccwButton);
         rotateRow->addWidget(cwButton);
         rotateRow->addWidget(clearMinoButton);
         minoLayout->addLayout(rotateRow);
         auto *moveGrid = new QGridLayout();
-        auto *upButton = new QPushButton("Up", minoGroup);
-        auto *leftButton = new QPushButton("Left", minoGroup);
-        auto *downButton = new QPushButton("Down", minoGroup);
-        auto *rightButton = new QPushButton("Right", minoGroup);
+        auto *upButton = new QPushButton("Up", minoGroup_);
+        auto *leftButton = new QPushButton("Left", minoGroup_);
+        auto *downButton = new QPushButton("Down", minoGroup_);
+        auto *rightButton = new QPushButton("Right", minoGroup_);
         moveGrid->addWidget(upButton, 0, 1);
         moveGrid->addWidget(leftButton, 1, 0);
         moveGrid->addWidget(downButton, 1, 1);
         moveGrid->addWidget(rightButton, 1, 2);
         minoLayout->addLayout(moveGrid);
-        layout->addWidget(minoGroup);
+        layout->addWidget(minoGroup_);
 
-        auto *pagesGroup = new QGroupBox("Pages", panel);
-        auto *pagesLayout = new QVBoxLayout(pagesGroup);
+        pagesGroup_ = new QGroupBox("Pages", panel);
+        auto *pagesLayout = new QVBoxLayout(pagesGroup_);
         auto *navRow = new QHBoxLayout();
-        prevPageButton_ = new QPushButton("Previous", pagesGroup);
-        pageLabel_ = new QLabel("1/1", pagesGroup);
+        prevPageButton_ = new QPushButton("Previous", pagesGroup_);
+        pageLabel_ = new QLabel("1/1", pagesGroup_);
         pageLabel_->setAlignment(Qt::AlignCenter);
-        nextPageButton_ = new QPushButton("Next", pagesGroup);
+        nextPageButton_ = new QPushButton("Next", pagesGroup_);
         navRow->addWidget(prevPageButton_);
         navRow->addWidget(pageLabel_);
         navRow->addWidget(nextPageButton_);
         pagesLayout->addLayout(navRow);
         auto *pageActions = new QGridLayout();
-        addPageButton_ = new QPushButton("Add", pagesGroup);
-        trimBeforePagesButton_ = new QPushButton("Trim Before", pagesGroup);
-        trimPagesButton_ = new QPushButton("Trim After", pagesGroup);
+        addPageButton_ = new QPushButton("Add", pagesGroup_);
+        trimBeforePagesButton_ = new QPushButton("Trim Before", pagesGroup_);
+        trimPagesButton_ = new QPushButton("Trim After", pagesGroup_);
         pageActions->addWidget(addPageButton_, 0, 0, 1, 2);
         pageActions->addWidget(trimBeforePagesButton_, 1, 0);
         pageActions->addWidget(trimPagesButton_, 1, 1);
         pagesLayout->addLayout(pageActions);
-        layout->addWidget(pagesGroup);
+        layout->addWidget(pagesGroup_);
 
         auto *outputCodeButton = new QPushButton("Output Code", panel);
         layout->addWidget(outputCodeButton);
@@ -1321,6 +1333,120 @@ private:
         }
     }
 
+    bool commandSupportsHoldDropKicks(const QString &command) const {
+        return command != "spin";
+    }
+
+    bool commandSupportsLines(const QString &command) const {
+        return command == "percent" || command == "path" || command == "tetris" || command == "tetris-path"
+            || command == "setup" || command == "spin";
+    }
+
+    void setFormRowVisible(QWidget *field, bool visible) {
+        if (!field) {
+            return;
+        }
+        field->setVisible(visible);
+        if (searchForm_) {
+            if (QWidget *label = searchForm_->labelForField(field)) {
+                label->setVisible(visible);
+            }
+        }
+    }
+
+    int autoCommandHeight() const {
+        if (!board_) {
+            return 1;
+        }
+        const auto &cells = board_->cells();
+        int topOccupied = kRows;
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                if (cells[row * kColumns + col] != 0) {
+                    topOccupied = qMin(topOccupied, row);
+                }
+            }
+        }
+        return topOccupied == kRows ? 1 : kRows - topOccupied;
+    }
+
+    void convertCurrentPageToSetupColors() {
+        if (!board_) {
+            return;
+        }
+        syncCurrentPageFromBoard();
+        ensureFumenState();
+        auto &page = fumenPages_[currentFumenPage_];
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const int index = (kVisibleTopRow + row) * kColumns + col;
+                const int value = page[index];
+                if (value != 0 && value != 1 && value != 3 && value != 8) {
+                    page[index] = 8;
+                }
+            }
+        }
+        currentOperation_ = FumenOperation();
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(false);
+            updatingFumenControls_ = false;
+        }
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+    }
+
+    void updateCommandUi() {
+        if (!commandBox_) {
+            return;
+        }
+        const QString command = commandBox_->currentText();
+        const bool setupMode = command == "setup";
+        const bool spinMode = command == "spin";
+        const bool supportsHoldDrop = commandSupportsHoldDropKicks(command);
+        const bool supportsLines = commandSupportsLines(command);
+
+        setFormRowVisible(holdBox_, supportsHoldDrop);
+        setFormRowVisible(dropBox_, supportsHoldDrop);
+        setFormRowVisible(linesSpin_, supportsLines);
+        if (QWidget *label = searchForm_ ? searchForm_->labelForField(linesSpin_) : nullptr) {
+            auto *labelWidget = qobject_cast<QLabel *>(label);
+            if (labelWidget) {
+                if (setupMode) {
+                    labelWidget->setText("Auto height");
+                } else if (spinMode) {
+                    labelWidget->setText("T lines");
+                } else {
+                    labelWidget->setText("Lines");
+                }
+            }
+        }
+        linesSpin_->setEnabled(!setupMode);
+        linesSpin_->setRange(spinMode ? 1 : 1, spinMode ? 3 : 20);
+        if (spinMode && linesSpin_->value() > 3) {
+            linesSpin_->setValue(2);
+        }
+        if (setupMode) {
+            convertCurrentPageToSetupColors();
+            linesSpin_->setValue(qMin(12, autoCommandHeight()));
+            if (board_ && board_->paintValue() != 1 && board_->paintValue() != 3 && board_->paintValue() != 8) {
+                selectPaint(8);
+            }
+        }
+
+        for (int i = 0; i < static_cast<int>(paintButtons_.size()); ++i) {
+            const int value = i < static_cast<int>(paintValues_.size()) ? paintValues_[i] : 0;
+            paintButtons_[i]->setVisible(!setupMode || value == 1 || value == 3 || value == 8);
+        }
+        if (minoGroup_) {
+            minoGroup_->setEnabled(!setupMode);
+        }
+        if (pagesGroup_) {
+            pagesGroup_->setEnabled(!setupMode);
+        }
+        updatePageControls();
+    }
+
     void rotateCurrentOperation(int delta) {
         if (!placeMinoCheck_) {
             return;
@@ -1691,11 +1817,49 @@ private:
         }
         const QString content = QString::fromUtf8(file.readAll());
         if (path.endsWith(".html", Qt::CaseInsensitive) || content.trimmed().startsWith("<")) {
-            centerOutputBrowser_->setHtml(content);
+            centerOutputBrowser_->setHtml(themedOutputHtml(content));
         } else {
             centerOutputBrowser_->setPlainText(content);
         }
         extractPreviewCodes(content);
+    }
+
+    QString themedOutputHtml(const QString &content) const {
+        const QString css = R"(
+<style>
+html, body {
+    background: #1f1f1f !important;
+    color: #eeeeee !important;
+    font-family: Menlo, "SF Mono", "DejaVu Sans Mono", monospace !important;
+    font-size: 13px !important;
+    line-height: 1.45 !important;
+}
+a { color: #8ab4ff !important; }
+a:visited { color: #c7a8ff !important; }
+table, th, td { border-color: #555555 !important; color: #eeeeee !important; }
+th { background: #303030 !important; }
+td { background: #242424 !important; }
+pre, code {
+    color: #f0f0f0 !important;
+    background: #171717 !important;
+    font-family: Menlo, "SF Mono", "DejaVu Sans Mono", monospace !important;
+}
+</style>
+)";
+        QString html = content;
+        const int headClose = html.indexOf("</head>", 0, Qt::CaseInsensitive);
+        if (headClose >= 0) {
+            html.insert(headClose, css);
+            return html;
+        }
+        const int bodyOpen = html.indexOf("<body", 0, Qt::CaseInsensitive);
+        if (bodyOpen >= 0) {
+            return css + html;
+        }
+        if (html.trimmed().startsWith("<")) {
+            return "<html><head>" + css + "</head><body>" + html + "</body></html>";
+        }
+        return "<html><head>" + css + "</head><body><pre>" + html.toHtmlEscaped() + "</pre></body></html>";
     }
 
     QString selectedOutputFilePath() const {
@@ -2193,9 +2357,8 @@ private:
         for (auto *button : paintButtons_) {
             button->setChecked(false);
         }
-        const std::vector<int> palette = {0, 8, 1, 2, 3, 4, 5, 6, 7};
-        for (int i = 0; i < static_cast<int>(palette.size()) && i < static_cast<int>(paintButtons_.size()); ++i) {
-            if (palette[i] == value) {
+        for (int i = 0; i < static_cast<int>(paintValues_.size()) && i < static_cast<int>(paintButtons_.size()); ++i) {
+            if (paintValues_[i] == value) {
                 paintButtons_[i]->setChecked(true);
             }
         }
@@ -2339,6 +2502,60 @@ private:
         return text;
     }
 
+    QString setupFieldText(bool *ok, QString *error) {
+        if (ok) {
+            *ok = false;
+        }
+        if (error) {
+            error->clear();
+        }
+        syncCurrentPageFromBoard();
+        convertCurrentPageToSetupColors();
+        const auto &cells = board_->cells();
+        const int height = autoCommandHeight();
+        if (linesSpin_) {
+            linesSpin_->setValue(qMin(12, height));
+        }
+        if (height > 12) {
+            if (error) {
+                *error = "setup field input supports heights up to 12";
+            }
+            return QString();
+        }
+
+        QStringList rows;
+        bool hasFilledBlock = false;
+        for (int y = height - 1; y >= 0; --y) {
+            const int row = kRows - 1 - y;
+            QString rowText;
+            for (int col = 0; col < kColumns; ++col) {
+                const int value = cells[row * kColumns + col];
+                if (value == 1) {
+                    rowText += "*";
+                    hasFilledBlock = true;
+                } else if (value == 3) {
+                    rowText += ".";
+                } else if (value == 8) {
+                    rowText += "X";
+                } else {
+                    rowText += "_";
+                }
+            }
+            rows << rowText;
+        }
+        if (!hasFilledBlock) {
+            if (error) {
+                *error = "setup needs at least one I cell inside the selected height";
+            }
+            return QString();
+        }
+        rows.prepend(QString::number(height));
+        if (ok) {
+            *ok = true;
+        }
+        return rows.join('\n') + "\n";
+    }
+
     void updateGeneratedField() {
         if (generatedField_) {
             generatedField_->setPlainText(generatedFieldText());
@@ -2357,6 +2574,19 @@ private:
         return path;
     }
 
+    QString outputBaseForCommand(const QString &command) const {
+        QDir dir(appDataDir());
+        dir.mkpath("run");
+        const QString normalized = command;
+        if (normalized == "setup") {
+            return dir.filePath("run/qt_setup.html");
+        }
+        if (normalized == "tetris-path") {
+            return dir.filePath("run/qt_tetris_path");
+        }
+        return dir.filePath("run/qt_" + normalized);
+    }
+
     QStringList buildSfinderArguments(const QString &fieldPath, const QString &patternsPath, const QString &outputBase) const {
         const QString command = commandBox_->currentText();
         QString sfCommand = command;
@@ -2367,7 +2597,7 @@ private:
         args << sfCommand;
 
         const QString fumenCode = fumenEdit_->toPlainText().trimmed();
-        if ((command == "cover" || command == "setup") && !fumenCode.isEmpty()) {
+        if (command == "cover" && !fumenCode.isEmpty()) {
             args << "-t" << fumenCode;
         } else {
             args << "-fp" << fieldPath;
@@ -2385,14 +2615,17 @@ private:
             args << "-c" << QString::number(linesSpin_->value());
         }
         if (command == "tetris-path") {
-            args << "--success-condition" << "tetris-end";
+            args << "-sc" << "tetris-end";
+        }
+        if (command == "tetris") {
+            args << "-lp" << outputBase;
         }
         if (command == "path" || command == "tetris-path") {
             args << "-f" << "html";
             args << "-o" << outputBase;
         }
         if (command == "setup") {
-            args << "-l" << QString::number(linesSpin_->value());
+            args << "-l" << QString::number(autoCommandHeight());
             args << "-f" << "I";
             args << "-m" << "O";
             args << "-fo" << "html";
@@ -2407,7 +2640,7 @@ private:
         if (command == "spin") {
             args << "-c" << QString::number(linesSpin_->value());
             args << "-fb" << "0";
-            args << "-ft" << QString::number(linesSpin_->value());
+            args << "-ft" << QString::number(autoCommandHeight());
             args << "-f" << "none";
             args << "-fo" << "html";
             args << "-o" << outputBase;
@@ -2420,10 +2653,20 @@ private:
             return;
         }
 
-        const QString fieldPath = writeTextFile("field.txt", generatedFieldText());
+        const QString command = commandBox_->currentText();
+        bool setupOk = true;
+        QString setupError;
+        const QString fieldText = command == "setup" ? setupFieldText(&setupOk, &setupError) : generatedFieldText();
+        if (!setupOk) {
+            showingOutputFileContent_ = false;
+            rawOutputLog_ = "Setup input failed: " + setupError + "\n";
+            refreshDisplayedOutput();
+            return;
+        }
+        const QString fieldPath = writeTextFile(command == "setup" ? "setup-field.txt" : "field.txt", fieldText);
         const QString patterns = patternsEdit_->text().trimmed().isEmpty() ? "*p7" : patternsEdit_->text().trimmed();
         const QString patternsPath = writeTextFile("patterns.txt", patterns + "\n");
-        const QString outputBase = QDir(appDataDir()).filePath("run/qt_output");
+        const QString outputBase = outputBaseForCommand(command);
 
         QString program;
         QStringList args;
@@ -2493,6 +2736,7 @@ private:
     QString repoRoot_;
     std::vector<Opener> openers_;
     BoardWidget *board_ = nullptr;
+    QFormLayout *searchForm_ = nullptr;
     QComboBox *commandBox_ = nullptr;
     QComboBox *holdBox_ = nullptr;
     QComboBox *dropBox_ = nullptr;
@@ -2502,6 +2746,9 @@ private:
     QComboBox *openerGroupBox_ = nullptr;
     QComboBox *openerVariationBox_ = nullptr;
     QCheckBox *placeMinoCheck_ = nullptr;
+    QGroupBox *paintGroup_ = nullptr;
+    QGroupBox *minoGroup_ = nullptr;
+    QGroupBox *pagesGroup_ = nullptr;
     QComboBox *minoPieceBox_ = nullptr;
     QLabel *pageLabel_ = nullptr;
     QPushButton *prevPageButton_ = nullptr;
@@ -2526,6 +2773,7 @@ private:
     QLabel *previewPageLabel_ = nullptr;
     QPushButton *runButton_ = nullptr;
     QPushButton *cancelButton_ = nullptr;
+    std::vector<int> paintValues_;
     std::vector<QPushButton *> paintButtons_;
     std::vector<std::array<int, kFumenBlocks>> fumenPages_;
     std::vector<FumenOperation> fumenOperations_;
