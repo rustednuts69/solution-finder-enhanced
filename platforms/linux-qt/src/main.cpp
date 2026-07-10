@@ -10,7 +10,6 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
-#include <QGuiApplication>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -31,8 +30,6 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QRubberBand>
-#include <QScreen>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStackedWidget>
@@ -40,10 +37,10 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextStream>
-#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QStyleFactory>
@@ -355,82 +352,88 @@ std::optional<std::array<int, kFumenBlocks>> fumenCellsFromBoardImage(const QIma
     return cells;
 }
 
-class ScreenCaptureOverlay : public QWidget {
-public:
-    explicit ScreenCaptureOverlay(QWidget *parent = nullptr)
-        : QWidget(parent), rubberBand_(new QRubberBand(QRubberBand::Rectangle, this)) {
-        setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
-        setAttribute(Qt::WA_TranslucentBackground);
-        setAttribute(Qt::WA_NoSystemBackground);
-        setCursor(Qt::CrossCursor);
-        if (QScreen *screen = QGuiApplication::primaryScreen()) {
-            screen_ = screen;
-            setGeometry(screen->geometry());
-        }
+std::optional<QImage> runScreenshotCommand(const QString &program,
+                                           const QStringList &arguments,
+                                           const QString &path,
+                                           QWidget *parent) {
+    QProcess process(parent);
+    process.start(program, arguments);
+    if (!process.waitForStarted(3000)) {
+        return std::nullopt;
+    }
+    while (!process.waitForFinished(100)) {
+        QApplication::processEvents(QEventLoop::AllEvents, 100);
+    }
+    QFileInfo file(path);
+    if (!file.exists() || file.size() <= 0) {
+        QFile::remove(path);
+        return std::nullopt;
+    }
+    QImage image(path);
+    QFile::remove(path);
+    if (image.isNull()) {
+        return std::nullopt;
+    }
+    return image;
+}
+
+std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
+    QTemporaryFile temp(QDir::tempPath() + "/solution-finder-screenshot-XXXXXX.png");
+    temp.setAutoRemove(false);
+    if (!temp.open()) {
+        QMessageBox::warning(parent, "Screenshot", "Could not create a temporary screenshot file.");
+        return std::nullopt;
+    }
+    const QString path = temp.fileName();
+    temp.close();
+    QFile::remove(path);
+
+#ifdef Q_OS_MAC
+    if (QFileInfo::exists("/usr/sbin/screencapture")) {
+        return runScreenshotCommand("/usr/sbin/screencapture", {"-i", path}, path, parent);
+    }
+#else
+    const QString gnomeScreenshot = QStandardPaths::findExecutable("gnome-screenshot");
+    if (!gnomeScreenshot.isEmpty()) {
+        return runScreenshotCommand(gnomeScreenshot, {"-a", "-f", path}, path, parent);
     }
 
-    static std::optional<QImage> capture(QWidget *parent = nullptr) {
-        ScreenCaptureOverlay overlay(parent);
-        if (!overlay.screen_) {
-            return std::nullopt;
-        }
-        overlay.showFullScreen();
-        overlay.raise();
-        overlay.activateWindow();
-        overlay.loop_.exec();
-        return overlay.result_;
+    const QString grim = QStandardPaths::findExecutable("grim");
+    const QString slurp = QStandardPaths::findExecutable("slurp");
+    const QString shell = QStandardPaths::findExecutable("sh");
+    if (!grim.isEmpty() && !slurp.isEmpty() && !shell.isEmpty()) {
+        const QString script = "geometry=\"$(slurp)\" || exit 1\n"
+                               "grim -g \"$geometry\" \"$1\"";
+        return runScreenshotCommand(shell, {"-c", script, "solution-finder-screenshot", path}, path, parent);
     }
 
-protected:
-    void paintEvent(QPaintEvent *) override {
-        QPainter painter(this);
-        painter.fillRect(rect(), QColor(255, 255, 255, 28));
+    const QString spectacle = QStandardPaths::findExecutable("spectacle");
+    if (!spectacle.isEmpty()) {
+        return runScreenshotCommand(spectacle, {"-r", "-b", "-n", "-o", path}, path, parent);
     }
 
-    void keyPressEvent(QKeyEvent *event) override {
-        if (event->key() == Qt::Key_Escape) {
-            loop_.quit();
-            close();
-            return;
-        }
-        QWidget::keyPressEvent(event);
+    const QString flameshot = QStandardPaths::findExecutable("flameshot");
+    if (!flameshot.isEmpty()) {
+        return runScreenshotCommand(flameshot, {"gui", "-p", path}, path, parent);
     }
 
-    void mousePressEvent(QMouseEvent *event) override {
-        origin_ = event->pos();
-        rubberBand_->setGeometry(QRect(origin_, QSize()));
-        rubberBand_->show();
+    const QString maim = QStandardPaths::findExecutable("maim");
+    if (!maim.isEmpty()) {
+        return runScreenshotCommand(maim, {"-s", path}, path, parent);
     }
 
-    void mouseMoveEvent(QMouseEvent *event) override {
-        rubberBand_->setGeometry(QRect(origin_, event->pos()).normalized());
+    const QString scrot = QStandardPaths::findExecutable("scrot");
+    if (!scrot.isEmpty()) {
+        return runScreenshotCommand(scrot, {"-s", path}, path, parent);
     }
+#endif
 
-    void mouseReleaseEvent(QMouseEvent *) override {
-        const QRect localRect = rubberBand_->geometry().normalized();
-        rubberBand_->hide();
-        selection_ = localRect.translated(geometry().topLeft());
-        hide();
-        if (selection_.width() < 10 || selection_.height() < 10 || !screen_) {
-            loop_.quit();
-            close();
-            return;
-        }
-        QTimer::singleShot(120, this, [this]() {
-            result_ = screen_->grabWindow(0, selection_.x(), selection_.y(), selection_.width(), selection_.height()).toImage();
-            loop_.quit();
-            close();
-        });
-    }
-
-private:
-    QEventLoop loop_;
-    QRubberBand *rubberBand_ = nullptr;
-    QScreen *screen_ = nullptr;
-    QPoint origin_;
-    QRect selection_;
-    std::optional<QImage> result_;
-};
+    QMessageBox::warning(parent,
+                         "Screenshot",
+                         "No compatible region screenshot tool was found.\n\n"
+                         "On Linux, install one of: gnome-screenshot, grim + slurp, spectacle, flameshot, maim, or scrot.");
+    return std::nullopt;
+}
 
 std::optional<DecodedFumen> decodeFumenV115(QString code) {
     code = code.trimmed();
@@ -2810,7 +2813,7 @@ pre, code {
     }
 
     void importBoardScreenshot() {
-        const auto image = ScreenCaptureOverlay::capture(this);
+        const auto image = captureBoardScreenshot(this);
         if (!image.has_value()) {
             return;
         }
@@ -3076,7 +3079,7 @@ pre, code {
     }
 
     void detectOpeningFromScreenshot() {
-        const auto image = ScreenCaptureOverlay::capture(this);
+        const auto image = captureBoardScreenshot(this);
         if (!image.has_value()) {
             return;
         }

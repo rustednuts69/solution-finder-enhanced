@@ -44,6 +44,17 @@ Arch/Manjaro:
 sudo pacman -S --needed git cmake gcc qt6-base jre-openjdk
 ```
 
+Screenshot import uses your desktop's region screenshot tool instead of drawing
+its own capture overlay. Install one of these if your desktop does not already
+include one:
+
+```sh
+# Debian/Ubuntu examples
+sudo apt install -y gnome-screenshot
+# Wayland/wlroots users can use:
+sudo apt install -y grim slurp
+```
+
 Then build and run:
 
 ```sh

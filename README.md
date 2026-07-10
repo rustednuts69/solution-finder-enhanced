@@ -48,6 +48,11 @@ Arch/Manjaro:
 sudo pacman -S --needed git cmake gcc qt6-base jre-openjdk
 ```
 
+For screenshot import/opener detection on Linux, install a region screenshot
+tool if your desktop does not already provide one. Supported tools include
+`gnome-screenshot`, `grim` + `slurp`, `spectacle`, `flameshot`, `maim`, and
+`scrot`.
+
 Then build and run:
 
 ```sh
