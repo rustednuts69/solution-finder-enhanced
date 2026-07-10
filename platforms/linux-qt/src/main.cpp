@@ -1005,13 +1005,14 @@ private:
 
         centerOutputBrowser_ = new QTextBrowser(page);
         centerOutputBrowser_->setOpenExternalLinks(false);
+        centerOutputBrowser_->setOpenLinks(false);
         centerOutputBrowser_->setStyleSheet("font-family: 'Menlo', 'SF Mono', 'DejaVu Sans Mono', monospace; font-size: 13px;");
         layout->addWidget(centerOutputBrowser_, 1);
 
         connect(refreshButton, &QPushButton::clicked, this, [this]() { refreshGeneratedFiles(); });
         connect(outputFileBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() { showSelectedGeneratedFile(); });
         connect(centerOutputBrowser_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
-            loadPreviewCode(url.toString());
+            openFumenLinkInPreview(url);
         });
         return page;
     }
@@ -2071,10 +2072,60 @@ pre, code {
         }
     }
 
-    void loadPreviewCode(QString code) {
-        if (code.startsWith("file:", Qt::CaseInsensitive)) {
+    QString extractFumenCode(const QString &candidate) const {
+        const QString decoded = QString::fromUtf8(QByteArray::fromPercentEncoding(candidate.toUtf8()));
+        const QStringList candidates = {candidate, decoded};
+        const QRegularExpression regex("v115@[A-Za-z0-9+/\\?]+");
+        for (const QString &text : candidates) {
+            const QRegularExpressionMatch match = regex.match(text);
+            if (match.hasMatch()) {
+                return match.captured(0).trimmed();
+            }
+        }
+        return QString();
+    }
+
+    QString fumenCodeFromUrl(const QUrl &url) const {
+        const QStringList candidates = {
+            url.toString(),
+            url.toString(QUrl::FullyEncoded),
+            QString::fromUtf8(QByteArray::fromPercentEncoding(url.toEncoded())),
+            url.query(),
+            url.fragment(),
+            url.path()
+        };
+        for (const QString &candidate : candidates) {
+            const QString code = extractFumenCode(candidate);
+            if (code.startsWith("v115@") && code.size() > 6) {
+                return code;
+            }
+        }
+        return QString();
+    }
+
+    void openFumenLinkInPreview(const QUrl &url) {
+        const QString code = fumenCodeFromUrl(url);
+        if (code.isEmpty()) {
+            appendRawOutput("\nNo fumen code found in link: " + url.toString() + "\n");
             return;
         }
+        if (previewCodeBox_) {
+            previewCodeBox_->blockSignals(true);
+            int index = previewCodeBox_->findText(code);
+            if (index < 0) {
+                previewCodeBox_->insertItem(0, code);
+                index = 0;
+            }
+            previewCodeBox_->setCurrentIndex(index);
+            previewCodeBox_->blockSignals(false);
+        }
+        loadPreviewCode(code);
+        if (sectionTabs_) {
+            sectionTabs_->setCurrentIndex(3);
+        }
+    }
+
+    void loadPreviewCode(QString code) {
         const int prefix = code.indexOf("v115@");
         if (prefix > 0) {
             code = code.mid(prefix);
