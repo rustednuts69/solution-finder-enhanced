@@ -1,8 +1,9 @@
 # Solution Finder Enhanced Qt UI
 
-This is the first native Qt shell for the future Linux build of Solution Finder
-Enhanced. It is intentionally separate from the macOS SwiftUI app so Linux work
-can move forward without disturbing the working macOS version.
+This is the native Qt frontend for the Linux build of Solution Finder Enhanced.
+Its interface and application logic live in `platforms/qt-common` and are shared
+with the Windows build, while Linux keeps its own packaging and screenshot-tool
+integration.
 
 ## Current Scope
 

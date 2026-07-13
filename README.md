@@ -71,3 +71,23 @@ cd solution-finder-enhanced/platforms/linux-qt
 ```
 
 The AppImage build includes the shared opener book and bundled sfinder files.
+
+## Windows Qt App
+
+The Windows app shares its interface and application logic with the Linux Qt
+build. It uses a built-in Windows region selector for screenshot import, so it
+does not require Flameshot or another screenshot utility.
+
+Install Qt 6, CMake, Visual Studio 2022 Build Tools, and Java. Then open an
+**x64 Native Tools Command Prompt for VS 2022** and run:
+
+```bat
+git clone --branch codex/windows-ui https://github.com/rustednuts69/solution-finder-enhanced.git
+cd solution-finder-enhanced\platforms\windows-qt
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:\Qt\6.8.3\msvc2022_64
+cmake --build build --config Release
+C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe --release build\Release\solution-finder-enhanced.exe
+```
+
+Replace `6.8.3` with the installed Qt version. More Windows-specific details are
+in `platforms/windows-qt/README.md`.

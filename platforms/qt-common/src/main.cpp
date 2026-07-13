@@ -2,7 +2,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDesktopServices>
+#include <QDialog>
 #include <QDir>
 #include <QDirIterator>
 #include <QEventLoop>
@@ -11,6 +13,7 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QImage>
@@ -30,6 +33,8 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QRubberBand>
+#include <QScreen>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStackedWidget>
@@ -412,7 +417,133 @@ QString findProgram(const QString &name) {
     return QString();
 }
 
+class ScreenshotSelectionDialog : public QDialog {
+public:
+    ScreenshotSelectionDialog(const QPixmap &desktop, const QRect &screenGeometry, QWidget *parent = nullptr)
+        : QDialog(parent), desktop_(desktop), screenGeometry_(screenGeometry), rubberBand_(QRubberBand::Rectangle, this) {
+        setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
+        setAttribute(Qt::WA_DeleteOnClose, false);
+        setCursor(Qt::CrossCursor);
+        setGeometry(screenGeometry_);
+    }
+
+    std::optional<QImage> selectedImage() const {
+        if (!selection_.isValid() || selection_.width() < 4 || selection_.height() < 4) {
+            return std::nullopt;
+        }
+        const QImage source = desktop_.toImage();
+        const double scaleX = static_cast<double>(source.width()) / qMax(1, width());
+        const double scaleY = static_cast<double>(source.height()) / qMax(1, height());
+        const QRect sourceRect(qRound(selection_.x() * scaleX),
+                               qRound(selection_.y() * scaleY),
+                               qRound(selection_.width() * scaleX),
+                               qRound(selection_.height() * scaleY));
+        return source.copy(sourceRect.intersected(source.rect()));
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.drawPixmap(rect(), desktop_);
+        painter.fillRect(rect(), QColor(0, 0, 0, 72));
+        if (selection_.isValid()) {
+            painter.save();
+            painter.setClipRect(selection_);
+            painter.drawPixmap(rect(), desktop_);
+            painter.restore();
+        }
+    }
+
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() != Qt::LeftButton) {
+            return;
+        }
+        origin_ = event->position().toPoint();
+        selection_ = QRect(origin_, QSize());
+        rubberBand_.setGeometry(selection_);
+        rubberBand_.show();
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override {
+        if (!rubberBand_.isVisible()) {
+            return;
+        }
+        selection_ = QRect(origin_, event->position().toPoint()).normalized().intersected(rect());
+        rubberBand_.setGeometry(selection_);
+        update();
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        if (event->button() != Qt::LeftButton || !rubberBand_.isVisible()) {
+            return;
+        }
+        selection_ = QRect(origin_, event->position().toPoint()).normalized().intersected(rect());
+        selection_.width() >= 4 && selection_.height() >= 4 ? accept() : reject();
+    }
+
+    void keyPressEvent(QKeyEvent *event) override {
+        if (event->key() == Qt::Key_Escape) {
+            reject();
+            return;
+        }
+        QDialog::keyPressEvent(event);
+    }
+
+private:
+    QPixmap desktop_;
+    QRect screenGeometry_;
+    QRubberBand rubberBand_;
+    QPoint origin_;
+    QRect selection_;
+};
+
+std::optional<QImage> captureWindowsRegion(QWidget *parent) {
+    QWidget *window = parent ? parent->window() : nullptr;
+    const bool wasVisible = window && window->isVisible();
+    if (wasVisible) {
+        window->hide();
+        QApplication::processEvents(QEventLoop::AllEvents, 200);
+    }
+
+    QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    if (!screen) {
+        if (wasVisible) {
+            window->show();
+        }
+        QMessageBox::warning(parent, "Screenshot", "Windows did not report an available display.");
+        return std::nullopt;
+    }
+
+    const QPixmap desktop = screen->grabWindow(0);
+    if (desktop.isNull()) {
+        if (wasVisible) {
+            window->show();
+        }
+        QMessageBox::warning(parent, "Screenshot", "Windows could not capture the selected display.");
+        return std::nullopt;
+    }
+
+    ScreenshotSelectionDialog selector(desktop, screen->geometry(), nullptr);
+    const int result = selector.exec();
+    std::optional<QImage> image;
+    if (result == QDialog::Accepted) {
+        image = selector.selectedImage();
+    }
+    if (wasVisible) {
+        window->show();
+        window->raise();
+        window->activateWindow();
+    }
+    return image;
+}
+
 std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
+#ifdef Q_OS_WIN
+    return captureWindowsRegion(parent);
+#else
     QTemporaryFile temp(QDir::tempPath() + "/solution-finder-screenshot-XXXXXX.png");
     temp.setAutoRemove(false);
     if (!temp.open()) {
@@ -504,6 +635,7 @@ std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
                          detail + "\n\n"
                          "On Linux, install one of: gnome-screenshot, grim + slurp, spectacle, flameshot, maim, or scrot.");
     return std::nullopt;
+#endif
 }
 
 std::optional<DecodedFumen> decodeFumenV115(QString code) {
@@ -910,6 +1042,13 @@ public:
         updateGeneratedField();
     }
 
+    ~MainWindow() override {
+        if (process_ && process_->state() != QProcess::NotRunning) {
+            process_->kill();
+            process_->waitForFinished(2000);
+        }
+    }
+
 private:
     void buildUi() {
         auto *root = new QWidget(this);
@@ -943,11 +1082,15 @@ private:
         linesSpin_ = new QSpinBox(commandGroup);
         linesSpin_->setRange(1, 20);
         linesSpin_->setValue(4);
+        spinHeightEdit_ = new QLineEdit(commandGroup);
+        spinHeightEdit_->setReadOnly(true);
+        spinHeightEdit_->setFocusPolicy(Qt::NoFocus);
         patternsEdit_ = new QLineEdit("t,*p5", commandGroup);
         searchForm_->addRow("Command", commandBox_);
         searchForm_->addRow("Hold", holdBox_);
         searchForm_->addRow("Drop", dropBox_);
         searchForm_->addRow("Lines", linesSpin_);
+        searchForm_->addRow("Board height", spinHeightEdit_);
         searchForm_->addRow("Patterns", patternsEdit_);
         layout->addWidget(commandGroup);
 
@@ -1070,9 +1213,6 @@ private:
         board_ = new BoardWidget(panel);
         board_->onChanged = [this]() {
             syncCurrentPageFromBoard();
-            if (commandBox_ && commandBox_->currentText() == "setup" && linesSpin_) {
-                linesSpin_->setValue(qMin(12, autoCommandHeight()));
-            }
             updateGeneratedField();
             updateFumenCodeFromPages();
         };
@@ -1692,6 +1832,16 @@ private:
         return topOccupied == kRows ? 1 : kRows - topOccupied;
     }
 
+    void updateAutoHeightFields() {
+        const int height = autoCommandHeight();
+        if (spinHeightEdit_) {
+            spinHeightEdit_->setText(QString::number(height));
+        }
+        if (commandBox_ && commandBox_->currentText() == "setup" && linesSpin_) {
+            linesSpin_->setValue(qMin(12, height));
+        }
+    }
+
     void convertFumenToSetupGray() {
         if (!board_) {
             return;
@@ -1728,6 +1878,7 @@ private:
         setFormRowVisible(holdBox_, supportsHoldDrop);
         setFormRowVisible(dropBox_, supportsHoldDrop);
         setFormRowVisible(linesSpin_, supportsLines);
+        setFormRowVisible(spinHeightEdit_, spinMode);
         if (QWidget *label = searchForm_ ? searchForm_->labelForField(linesSpin_) : nullptr) {
             auto *labelWidget = qobject_cast<QLabel *>(label);
             if (labelWidget) {
@@ -1750,11 +1901,11 @@ private:
         }
         setupModeActive_ = setupMode;
         if (setupMode) {
-            linesSpin_->setValue(qMin(12, autoCommandHeight()));
             if (board_ && board_->paintValue() != 1 && board_->paintValue() != 3 && board_->paintValue() != 8) {
                 selectPaint(8);
             }
         }
+        updateAutoHeightFields();
 
         for (int i = 0; i < static_cast<int>(paintButtons_.size()); ++i) {
             const int value = i < static_cast<int>(paintValues_.size()) ? paintValues_[i] : 0;
@@ -2014,9 +2165,6 @@ private:
         replaceFumenPages(decoded->pages, decoded->operations);
         if (commandBox_ && commandBox_->currentText() == "setup") {
             convertFumenToSetupGray();
-            if (linesSpin_) {
-                linesSpin_->setValue(qMin(12, autoCommandHeight()));
-            }
         }
         updateGeneratedField();
     }
@@ -2850,9 +2998,6 @@ pre, code {
                     replaceFumenPages(decoded->pages, decoded->operations);
                     if (commandBox_ && commandBox_->currentText() == "setup") {
                         convertFumenToSetupGray();
-                        if (linesSpin_) {
-                            linesSpin_->setValue(qMin(12, autoCommandHeight()));
-                        }
                     }
                     outputEdit_->appendPlainText(QString("Loaded opener: %1 - %2 (%3 page%4)")
                                                      .arg(opener.openerName, opener.variationName)
@@ -3266,6 +3411,7 @@ pre, code {
         if (generatedField_) {
             generatedField_->setPlainText(generatedFieldText());
         }
+        updateAutoHeightFields();
     }
 
     QString writeTextFile(const QString &name, const QString &content) {
@@ -3378,6 +3524,7 @@ pre, code {
         QStringList args;
         const QString linuxLauncher = repoRoot_ + "/native-linux/bin/sfinder";
         const QString macLauncher = repoRoot_ + "/native-macos/bin/sfinder";
+#ifndef Q_OS_WIN
         if (QFileInfo::exists(linuxLauncher)) {
             program = linuxLauncher;
         } else if (QFileInfo::exists(macLauncher) && QSysInfo::productType() == "macos") {
@@ -3386,6 +3533,10 @@ pre, code {
             program = "java";
             args << "-jar" << repoRoot_ + "/solution-finder-1.43/sfinder.jar";
         }
+#else
+        program = "java.exe";
+        args << "-jar" << repoRoot_ + "/solution-finder-1.43/sfinder.jar";
+#endif
         args << buildSfinderArguments(fieldPath, patternsPath, outputBase);
 
         showingOutputFileContent_ = false;
@@ -3402,6 +3553,12 @@ pre, code {
         process_ = new QProcess(this);
         process_->setWorkingDirectory(repoRoot_);
         process_->setProcessChannelMode(QProcess::MergedChannels);
+#ifdef Q_OS_WIN
+        process_->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *arguments) {
+            constexpr unsigned long kCreateNoWindow = 0x08000000UL;
+            arguments->flags |= kCreateNoWindow;
+        });
+#endif
 
         connect(process_, &QProcess::readyReadStandardOutput, this, [this]() {
             appendRawOutput(QString::fromLocal8Bit(process_->readAllStandardOutput()));
@@ -3447,6 +3604,7 @@ pre, code {
     QComboBox *holdBox_ = nullptr;
     QComboBox *dropBox_ = nullptr;
     QSpinBox *linesSpin_ = nullptr;
+    QLineEdit *spinHeightEdit_ = nullptr;
     QLineEdit *patternsEdit_ = nullptr;
     QCheckBox *verboseCheck_ = nullptr;
     QComboBox *openerGroupBox_ = nullptr;

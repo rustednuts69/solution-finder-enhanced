@@ -10,7 +10,7 @@ set(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 qt_add_executable(solution-finder-enhanced-qt
-    src/main.cpp
+    ../qt-common/src/main.cpp
 )
 
 target_link_libraries(solution-finder-enhanced-qt PRIVATE Qt6::Widgets)
