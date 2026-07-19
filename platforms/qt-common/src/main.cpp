@@ -2146,6 +2146,7 @@ public:
         resize(1250, 800);
         buildMenus();
         buildUi();
+        applyExperimentalFeaturesState();
         ensureFumenState();
         loadOpeners();
         updateBoardFromFumenState();
@@ -2184,6 +2185,14 @@ private:
         auto *installDatabaseAction = toolsMenu->addAction("Install Editable Opener Database");
         auto *showDatabaseAction = toolsMenu->addAction("Show Opener Database Folder");
 
+        auto *advancedMenu = menuBar()->addMenu("Advanced");
+        experimentalFeaturesAction_ = advancedMenu->addAction("Enable Experimental Features");
+        experimentalFeaturesAction_->setCheckable(true);
+        QSettings settings;
+        experimentalFeaturesEnabled_ =
+            settings.value("advanced/experimentalFeatures", false).toBool();
+        experimentalFeaturesAction_->setChecked(experimentalFeaturesEnabled_);
+
         connect(importerAction, &QAction::triggered, this, [this]() {
             showOpenerImporter();
         });
@@ -2196,6 +2205,72 @@ private:
         connect(showDatabaseAction, &QAction::triggered, this, [this]() {
             showOpenerDatabaseFolder();
         });
+        connect(experimentalFeaturesAction_, &QAction::toggled, this, [this](bool enabled) {
+            setExperimentalFeaturesEnabled(enabled);
+        });
+    }
+
+    bool isExperimentalCommand(const QString &command) const {
+        return command == "spin" || command == "ren";
+    }
+
+    void refreshCommandChoices() {
+        if (!commandBox_) {
+            return;
+        }
+        const QString previous = commandBox_->currentText();
+        commandBox_->blockSignals(true);
+        commandBox_->clear();
+        commandBox_->addItems(
+            {"percent", "path", "tetris", "tetris-path", "setup", "cover"});
+        if (experimentalFeaturesEnabled_) {
+            commandBox_->addItems({"ren", "spin"});
+        }
+        const int previousIndex = commandBox_->findText(previous);
+        commandBox_->setCurrentIndex(previousIndex >= 0 ? previousIndex : 0);
+        commandBox_->blockSignals(false);
+        if (holdBox_) {
+            updateCommandUi();
+        }
+    }
+
+    void applyExperimentalFeaturesState() {
+        refreshCommandChoices();
+        if (playScoutTabs_) {
+            playScoutTabs_->setVisible(experimentalFeaturesEnabled_);
+            if (!experimentalFeaturesEnabled_) {
+                playScoutTabs_->setCurrentIndex(0);
+            }
+        }
+        if (playSpinScoutAutoCheck_) {
+            playSpinScoutAutoCheck_->setEnabled(experimentalFeaturesEnabled_);
+        }
+        if (playRenScoutAutoCheck_) {
+            playRenScoutAutoCheck_->setEnabled(experimentalFeaturesEnabled_);
+        }
+        updateAuxiliaryScoutControls();
+    }
+
+    void setExperimentalFeaturesEnabled(bool enabled) {
+        experimentalFeaturesEnabled_ = enabled;
+        QSettings settings;
+        settings.setValue("advanced/experimentalFeatures", enabled);
+        if (!enabled) {
+            settings.setValue("play/spinScout/automatic", false);
+            settings.setValue("play/renScout/automatic", false);
+            if (playSpinScoutAutoCheck_) {
+                playSpinScoutAutoCheck_->setChecked(false);
+            }
+            if (playRenScoutAutoCheck_) {
+                playRenScoutAutoCheck_->setChecked(false);
+            }
+            if (auxiliaryScoutProcess_) {
+                cancelAuxiliaryScout();
+            }
+        }
+        applyExperimentalFeaturesState();
+        DiagnosticLog::instance().append(
+            QString("Experimental features %1.").arg(enabled ? "enabled" : "disabled"));
     }
 
     void showOpenerImporter() {
@@ -2302,7 +2377,7 @@ private:
         auto *commandGroup = new QGroupBox("Search Settings", panel);
         searchForm_ = new QFormLayout(commandGroup);
         commandBox_ = new QComboBox(commandGroup);
-        commandBox_->addItems({"percent", "path", "tetris", "tetris-path", "setup", "cover", "ren", "spin"});
+        refreshCommandChoices();
         holdBox_ = new QComboBox(commandGroup);
         holdBox_->addItems({"use", "avoid"});
         dropBox_ = new QComboBox(commandGroup);
@@ -2851,8 +2926,13 @@ private:
         }
         boardLayout->addLayout(boardActions);
 
-        auto *pcScoutGroup = new QGroupBox("PC Scout  |  Uses extra CPU and may cause lag", boardColumn);
+        auto *pcScoutGroup = new QGroupBox("PC Scout", page);
         auto *pcScoutLayout = new QVBoxLayout(pcScoutGroup);
+        pcScoutLayout->setSpacing(7);
+        auto *pcScoutNotice = new QLabel("Uses extra CPU and may cause lag", pcScoutGroup);
+        pcScoutNotice->setObjectName("paneSubtitle");
+        pcScoutNotice->setWordWrap(true);
+        pcScoutLayout->addWidget(pcScoutNotice);
         auto *pcScoutSourceRow = new QHBoxLayout();
         playPCEnabledCheck_ = new QCheckBox("Enabled", pcScoutGroup);
         playPCSourceBox_ = new QComboBox(pcScoutGroup);
@@ -2872,7 +2952,7 @@ private:
         playPCShowSolutionButton_->setEnabled(false);
         playPCCancelButton_ = new QPushButton("Cancel", pcScoutGroup);
         playPCCancelButton_->setEnabled(false);
-        pcScoutActions->addWidget(playPCDropBox_, 1);
+        pcScoutLayout->addWidget(playPCDropBox_);
         pcScoutActions->addWidget(playPCShowSolutionButton_);
         pcScoutActions->addWidget(playPCCancelButton_);
         pcScoutLayout->addLayout(pcScoutActions);
@@ -2964,12 +3044,12 @@ private:
         renScoutLayout->addLayout(renScoutBottom);
 
         playScoutTabs_ = new QTabWidget(page);
-        playScoutTabs_->addTab(pcScoutGroup, "Perfect Clear");
         playScoutTabs_->addTab(spinScoutPage, "Spin");
         playScoutTabs_->addTab(renScoutPage, "REN");
         playScoutTabs_->setMinimumWidth(540);
         playScoutTabs_->setMaximumWidth(900);
         playScoutTabs_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        playScoutTabs_->setVisible(experimentalFeaturesEnabled_);
         stageLayout->addWidget(boardColumn, 0);
 
         auto *nextColumn = new QWidget(page);
@@ -2985,8 +3065,8 @@ private:
         stageLayout->addWidget(nextColumn, 0);
 
         auto *side = new QWidget(page);
-        side->setMinimumWidth(190);
-        side->setMaximumWidth(240);
+        side->setMinimumWidth(220);
+        side->setMaximumWidth(290);
         auto *sideLayout = new QVBoxLayout(side);
         sideLayout->setContentsMargins(0, 0, 0, 0);
         sideLayout->setSpacing(10);
@@ -3016,6 +3096,7 @@ private:
         playPiecesLabel_ = new QLabel("Pieces: 0", statsGroup);
         playLinesLabel_ = new QLabel("Lines: 0", statsGroup);
         playLevelLabel_ = new QLabel("Level: 1", statsGroup);
+        playScoreLabel_ = new QLabel("Score: 0", statsGroup);
         playPpsLabel_ = new QLabel("PPS: 0.00", statsGroup);
         playClearLabel_ = new QLabel(statsGroup);
         playClearLabel_->setStyleSheet("font-weight: 650;");
@@ -3028,11 +3109,13 @@ private:
         statsLayout->addWidget(playPiecesLabel_);
         statsLayout->addWidget(playLinesLabel_);
         statsLayout->addWidget(playLevelLabel_);
+        statsLayout->addWidget(playScoreLabel_);
         statsLayout->addWidget(playClearLabel_);
         statsLayout->addWidget(playPpsLabel_);
         statsLayout->addWidget(playDetectionLabel_);
         statsLayout->addWidget(playStatusLabel_);
         sideLayout->addWidget(statsGroup);
+        sideLayout->addWidget(pcScoutGroup);
         sideLayout->addStretch(1);
         stageLayout->addWidget(side, 0);
         stageLayout->addStretch(1);
@@ -3138,9 +3221,11 @@ private:
             const int storedIndex = playPCDropBox_->findData(storedDrop);
             playPCDropBox_->setCurrentIndex(storedIndex >= 0 ? storedIndex : 1);
             playSpinScoutAutoCheck_->setChecked(
-                settings.value("play/spinScout/automatic", false).toBool());
+                experimentalFeaturesEnabled_
+                    && settings.value("play/spinScout/automatic", false).toBool());
             playRenScoutAutoCheck_->setChecked(
-                settings.value("play/renScout/automatic", false).toBool());
+                experimentalFeaturesEnabled_
+                    && settings.value("play/renScout/automatic", false).toBool());
         }
         pcScoutRefreshTimer_ = new QTimer(page);
         pcScoutRefreshTimer_->setSingleShot(true);
@@ -5176,6 +5261,10 @@ pre, code {
         }
         if (playPiecesLabel_) playPiecesLabel_->setText(QString("Pieces: %1").arg(playGame_.pieces_locked));
         if (playLinesLabel_) playLinesLabel_->setText(QString("Lines: %1").arg(playGame_.lines_cleared));
+        if (playScoreLabel_) {
+            playScoreLabel_->setText(
+                QString("Score: %1").arg(QLocale().toString(playGame_.score)));
+        }
         if (playLevelLabel_) {
             const int progressionLines = qMax(0, playGame_.lines_cleared - playGame_.progression_start_lines);
             const QString levelText = playGame_.level_progression_enabled
@@ -5951,10 +6040,12 @@ pre, code {
         const bool running = auxiliaryScoutProcess_ != nullptr;
         const bool blocked = process_ != nullptr || pcScoutProcess_ != nullptr;
         if (playSpinScoutButton_) {
-            playSpinScoutButton_->setEnabled(!running && !blocked);
+            playSpinScoutButton_->setEnabled(
+                experimentalFeaturesEnabled_ && !running && !blocked);
         }
         if (playRenScoutButton_) {
-            playRenScoutButton_->setEnabled(!running && !blocked);
+            playRenScoutButton_->setEnabled(
+                experimentalFeaturesEnabled_ && !running && !blocked);
         }
         if (playSpinScoutCancelButton_) {
             playSpinScoutCancelButton_->setEnabled(running && auxiliaryScoutMode_ == "spin");
@@ -6208,7 +6299,7 @@ pre, code {
 
     void scheduleAuxiliaryScouts(bool immediate = false) {
         auxiliaryAutoQueue_.clear();
-        if (!auxiliaryScoutRefreshTimer_) {
+        if (!experimentalFeaturesEnabled_ || !auxiliaryScoutRefreshTimer_) {
             return;
         }
         auxiliaryScoutRefreshTimer_->stop();
@@ -6303,6 +6394,13 @@ pre, code {
     void runAuxiliaryScout(const QString &mode, bool automaticRun = false) {
         QLabel *statusLabel = mode == "spin" ? playSpinScoutStatusLabel_ : playRenScoutStatusLabel_;
         QLabel *resultLabel = mode == "spin" ? playSpinScoutResultLabel_ : playRenScoutResultLabel_;
+        if (!experimentalFeaturesEnabled_) {
+            if (statusLabel) {
+                statusLabel->setText(
+                    "Enable Experimental Features from the Advanced menu to use this scout");
+            }
+            return;
+        }
         if (process_ || pcScoutProcess_ || auxiliaryScoutProcess_) {
             if (statusLabel) {
                 statusLabel->setText("Another sfinder search is running");
@@ -7201,6 +7299,14 @@ pre, code {
         }
 
         const QString command = commandBox_->currentText();
+        if (isExperimentalCommand(command) && !experimentalFeaturesEnabled_) {
+            showingOutputFileContent_ = false;
+            rawOutputLog_ =
+                "Enable Experimental Features from the Advanced menu to use "
+                + command + ".\n";
+            refreshDisplayedOutput();
+            return;
+        }
         bool setupOk = true;
         QString setupError;
         const QString fieldText = command == "setup" ? setupFieldText(&setupOk, &setupError) : generatedFieldText();
@@ -7297,6 +7403,7 @@ pre, code {
     BoardWidget *board_ = nullptr;
     QFormLayout *searchForm_ = nullptr;
     QComboBox *commandBox_ = nullptr;
+    QAction *experimentalFeaturesAction_ = nullptr;
     QComboBox *holdBox_ = nullptr;
     QComboBox *dropBox_ = nullptr;
     QSpinBox *linesSpin_ = nullptr;
@@ -7329,6 +7436,7 @@ pre, code {
     QLabel *playPiecesLabel_ = nullptr;
     QLabel *playLinesLabel_ = nullptr;
     QLabel *playLevelLabel_ = nullptr;
+    QLabel *playScoreLabel_ = nullptr;
     QLabel *playPpsLabel_ = nullptr;
     QLabel *playClearLabel_ = nullptr;
     QLabel *playDetectionLabel_ = nullptr;
@@ -7427,6 +7535,7 @@ pre, code {
     bool loadingOpeners_ = false;
     bool showingOutputFileContent_ = false;
     bool setupModeActive_ = false;
+    bool experimentalFeaturesEnabled_ = false;
     QProcess *process_ = nullptr;
     QProcess *pcScoutProcess_ = nullptr;
     QProcess *auxiliaryScoutProcess_ = nullptr;

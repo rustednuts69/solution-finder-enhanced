@@ -5,13 +5,14 @@ Its interface and application logic live in `platforms/qt-common` and are shared
 with the Windows build, while Linux keeps its own packaging and screenshot-tool
 integration.
 
-## Current Scope
+## Current Features
 
 - Native Qt Widgets layout
 - 10x20 editable board with click and drag painting
 - Opener group and variation selector from `shared/openers.json`
 - Native fumen page controls, mino placement controls, and fumen output code
-- Early native Play, Output, and Preview tabs
+- Play tab with guideline gameplay, configurable tuning, scoring, and PC Scout
+- Embedded Output and read-only fumen Preview tabs
 - Core sfinder command controls
 - Process runner for the bundled `solution-finder-1.43/sfinder.jar`
 - Command output pane
@@ -19,8 +20,8 @@ integration.
 - Screenshot opener detector
 - Embedded HTML output with fumen-link preview handoff
 
-Richer play tuning and the full advanced settings set are still expected
-follow-up work in this Qt port.
+Spin and REN commands and Play scouts are experimental and hidden by default.
+Enable them from **Advanced > Enable Experimental Features**.
 
 ## Build And Run On Linux
 
@@ -60,7 +61,7 @@ sudo apt install -y grim slurp
 Then build and run:
 
 ```sh
-git clone --branch codex/linux-ui https://github.com/rustednuts69/solution-finder-enhanced.git
+git clone https://github.com/rustednuts69/solution-finder-enhanced.git
 cd solution-finder-enhanced/platforms/linux-qt
 cmake -S . -B build
 cmake --build build
@@ -76,9 +77,9 @@ cmake --build build
 ./build/solution-finder-enhanced-qt
 ```
 
-The app discovers the repository root by looking for `shared/openers.json`, so
-run it from inside a clone of `solution-finder-enhanced` while this port is
-early.
+The development build discovers the repository root by looking for
+`shared/openers.json`, so run it from inside the repository clone. AppImage
+builds include the opener book and sfinder runtime.
 
 ## Build An AppImage
 

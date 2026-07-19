@@ -7,6 +7,7 @@ import WebKit
 struct SolutionFinderEnhancedApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.openWindow) private var openWindow
+    @AppStorage("advanced.experimentalFeatures") private var experimentalFeaturesEnabled = false
 
     var body: some Scene {
         WindowGroup("Solution Finder Enhanced") {
@@ -39,6 +40,9 @@ struct SolutionFinderEnhancedApp: App {
                 Button("Show Opener Database Folder") {
                     OpeningDatabase.showUserDatabaseFolder()
                 }
+            }
+            CommandMenu("Advanced") {
+                Toggle("Enable Experimental Features", isOn: $experimentalFeaturesEnabled)
             }
         }
     }
@@ -156,6 +160,10 @@ enum FinderCommand: String, CaseIterable, Identifiable {
         default:
             return rawValue
         }
+    }
+
+    var isExperimental: Bool {
+        self == .ren || self == .spin
     }
 
     var supportsOutputBase: Bool {
@@ -1575,6 +1583,10 @@ final class AppModel: ObservableObject {
     }
 
     func updateForCommand() {
+        if command.isExperimental
+            && !UserDefaults.standard.bool(forKey: "advanced.experimentalFeatures") {
+            command = .percent
+        }
         applyDefaultOutputBaseForCommand()
 
         switch command {
@@ -1724,6 +1736,12 @@ final class AppModel: ObservableObject {
 
     func run() {
         guard !isRunning else { return }
+        guard !command.isExperimental
+            || UserDefaults.standard.bool(forKey: "advanced.experimentalFeatures")
+        else {
+            status = "Enable Experimental Features from the Advanced menu to use \(command.rawValue)"
+            return
+        }
         guard !isPCScoutRunning else {
             status = "Cancel PC Scout before starting another search"
             return
@@ -4246,6 +4264,7 @@ struct PlayGamePresentation: Equatable {
     var next = Array(repeating: Int32(0), count: 5)
     var piecesLocked: Int32 = 0
     var linesCleared: Int32 = 0
+    var score: Int64 = 0
     var gravityLevel: Int32 = 1
     var lastClearLines: Int32 = 0
     var lastClearTSpin: Int32 = 0
@@ -4640,6 +4659,8 @@ struct PlayableGameView: View {
                 Text("Lines: \(presentation.linesCleared)")
                     .font(.body.monospacedDigit())
                 Text("Level: \(presentation.gravityLevel)")
+                    .font(.body.monospacedDigit())
+                Text("Score: \(presentation.score.formatted())")
                     .font(.body.monospacedDigit())
                 if !lastClearText.isEmpty {
                     Text(lastClearText)
@@ -5126,6 +5147,7 @@ struct PlayableGameView: View {
         }
         nextPresentation.piecesLocked = sourceGame.pieces_locked
         nextPresentation.linesCleared = sourceGame.lines_cleared
+        nextPresentation.score = sourceGame.score
         nextPresentation.gravityLevel = sourceGame.gravity_level
         nextPresentation.lastClearLines = sourceGame.last_clear_lines
         nextPresentation.lastClearTSpin = sourceGame.last_clear_t_spin
@@ -7664,6 +7686,7 @@ struct PlaySettingsView: View {
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var advancedExpanded = false
+    @AppStorage("advanced.experimentalFeatures") private var experimentalFeaturesEnabled = false
 
     let kickOptions = ["srs", "nokicks", "nullpomino180", "jstris180"]
     let formatOptions = ["html", "csv", "link", ""]
@@ -7678,7 +7701,9 @@ struct SettingsView: View {
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                     GridRow {
                         PickerField("Command", selection: $model.command) {
-                            ForEach(FinderCommand.allCases) { command in
+                            ForEach(FinderCommand.allCases.filter {
+                                experimentalFeaturesEnabled || !$0.isExperimental
+                            }) { command in
                                 Text(command.rawValue).tag(command)
                             }
                         }
@@ -7800,6 +7825,12 @@ struct SettingsView: View {
                 }
             }
             .padding(.top, 4)
+        }
+        .onChange(of: experimentalFeaturesEnabled) { enabled in
+            if !enabled && model.command.isExperimental {
+                model.command = .percent
+                model.updateForCommand()
+            }
         }
     }
 }

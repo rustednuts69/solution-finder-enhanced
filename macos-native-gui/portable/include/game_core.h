@@ -62,11 +62,16 @@ typedef struct SFTGameState {
     int bag_index;
     unsigned int rng_state;
     int game_over;
+    long long score;
     int lines_cleared;
     int pieces_locked;
+    int combo;
+    int back_to_back;
+    int last_score_delta;
     int last_clear_lines;
     int last_clear_t_spin;
     int last_clear_t_spin_mini;
+    int last_clear_perfect;
     int last_action_was_rotation;
     int gravity_ms;
     int gravity_level;
@@ -97,6 +102,15 @@ void sft_game_set_gravity_level(SFTGameState *state, int level);
 void sft_game_reset_level_progression(SFTGameState *state, int level);
 void sft_game_set_level_progression(SFTGameState *state, int enabled);
 int sft_game_lock_delay_for_level(int level);
+int sft_game_score_action(
+    int lines,
+    int t_spin,
+    int t_spin_mini,
+    int back_to_back,
+    int combo,
+    int perfect_clear,
+    int level
+);
 void sft_game_set_lock_delay(SFTGameState *state, int lock_delay_ms);
 void sft_game_set_lock_reset(SFTGameState *state, int mode, int move_limit);
 void sft_game_set_options(SFTGameState *state, int gravity_enabled, int infinite_lock_delay, int infinite_hold);

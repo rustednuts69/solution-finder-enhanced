@@ -44,7 +44,7 @@ somewhere else, specify it explicitly:
 The equivalent manual commands are:
 
 ```bat
-git clone --branch codex/windows-ui https://github.com/rustednuts69/solution-finder-enhanced.git
+git clone https://github.com/rustednuts69/solution-finder-enhanced.git
 cd solution-finder-enhanced\platforms\windows-qt
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:\Qt\6.8.3\msvc2022_64
 cmake --build build --config Release
@@ -61,5 +61,8 @@ C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe --release build\Release\solution-fin
 ```
 
 Run `build\Release\solution-finder-enhanced.exe` to test. A signed installer
-and Windows application icon are packaging follow-ups; they are not required
-for this VM build.
+is a future packaging step; the application icon and portable runtime bundle
+are already included by the current build.
+
+Spin and REN commands and Play scouts are experimental and hidden by default.
+Enable them from **Advanced > Enable Experimental Features**.

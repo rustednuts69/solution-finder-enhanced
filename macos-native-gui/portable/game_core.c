@@ -317,9 +317,69 @@ static int clear_lines(SFTGameState *state) {
     return cleared;
 }
 
+static int board_is_empty(const SFTGameState *state) {
+    for (int index = 0; index < SFT_GAME_HEIGHT * SFT_GAME_WIDTH; index++) {
+        if (state->board[index] != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int sft_game_score_action(
+    int lines,
+    int t_spin,
+    int t_spin_mini,
+    int back_to_back,
+    int combo,
+    int perfect_clear,
+    int level
+) {
+    int base = 0;
+    int difficult = 0;
+    int normalized_level = level < 1 ? 1 : level;
+
+    if (t_spin_mini) {
+        if (lines == 0) base = 100;
+        else if (lines == 1) base = 200;
+        else if (lines == 2) base = 400;
+    } else if (t_spin) {
+        if (lines == 0) base = 400;
+        else if (lines == 1) base = 800;
+        else if (lines == 2) base = 1200;
+        else if (lines == 3) base = 1600;
+    } else {
+        if (lines == 1) base = 100;
+        else if (lines == 2) base = 300;
+        else if (lines == 3) base = 500;
+        else if (lines == 4) base = 800;
+    }
+
+    difficult = lines > 0 && (t_spin || lines == 4);
+    if (difficult && back_to_back) {
+        base = base * 3 / 2;
+    }
+
+    int score = base * normalized_level;
+    if (lines > 0 && combo > 0) {
+        score += 50 * combo * normalized_level;
+    }
+    if (perfect_clear && lines > 0) {
+        int perfect_clear_base = 0;
+        if (lines == 1) perfect_clear_base = 800;
+        else if (lines == 2) perfect_clear_base = 1200;
+        else if (lines == 3) perfect_clear_base = 1800;
+        else if (lines == 4) perfect_clear_base = back_to_back ? 3200 : 2000;
+        score += perfect_clear_base * normalized_level;
+    }
+    return score;
+}
+
 static void lock_piece(SFTGameState *state) {
     int t_spin = is_t_spin(state);
     int t_spin_mini = t_spin ? is_t_spin_mini(state) : 0;
+    int scoring_level = state->gravity_level < 1 ? 1 : state->gravity_level;
+    int previous_back_to_back = state->back_to_back;
     int r = ((state->rotation % 4) + 4) % 4;
     for (int i = 0; i < 4; i++) {
         int px = state->x + piece_offsets[state->current][r][i].x;
@@ -331,6 +391,27 @@ static void lock_piece(SFTGameState *state) {
     state->last_clear_lines = clear_lines(state);
     state->last_clear_t_spin = t_spin;
     state->last_clear_t_spin_mini = t_spin_mini;
+    state->last_clear_perfect =
+        state->last_clear_lines > 0 && board_is_empty(state);
+    if (state->last_clear_lines > 0) {
+        state->combo += 1;
+    } else {
+        state->combo = -1;
+    }
+    state->last_score_delta = sft_game_score_action(
+        state->last_clear_lines,
+        t_spin,
+        t_spin_mini,
+        previous_back_to_back,
+        state->combo,
+        state->last_clear_perfect,
+        scoring_level
+    );
+    state->score += state->last_score_delta;
+    if (state->last_clear_lines > 0) {
+        state->back_to_back =
+            (t_spin || state->last_clear_lines == 4) ? 1 : 0;
+    }
     state->pieces_locked += 1;
     spawn_piece(state, next_piece(state));
 }
@@ -459,6 +540,7 @@ void sft_game_init_seeded(SFTGameState *state, unsigned int seed) {
     state->gravity_enabled = 1;
     state->infinite_lock_delay = 0;
     state->infinite_hold = 0;
+    state->combo = -1;
     refill_queue(state);
     spawn_piece(state, next_piece(state));
 }
@@ -669,7 +751,10 @@ void sft_game_tick(SFTGameState *state, int elapsed_ms, int soft_drop) {
     }
 
     if ((state->gravity_enabled || soft_drop) && state->gravity_level >= 20) {
-        drop_to_surface(state);
+        int moved = drop_to_surface(state);
+        if (soft_drop && !state->gravity_enabled) {
+            state->score += moved;
+        }
         state->gravity_accumulator_units = 0;
     } else if ((state->gravity_enabled || soft_drop) && state->gravity_level > 0) {
         long long gravity_rate = guideline_gravity_rates[state->gravity_level - 1];
@@ -686,6 +771,9 @@ void sft_game_tick(SFTGameState *state, int elapsed_ms, int soft_drop) {
                 state->gravity_accumulator_units = 0;
                 break;
             }
+            if (soft_drop) {
+                state->score += 1;
+            }
         }
     } else if (state->gravity_enabled || soft_drop) {
         int gravity = soft_drop ? state->gravity_ms / 20 : state->gravity_ms;
@@ -697,6 +785,9 @@ void sft_game_tick(SFTGameState *state, int elapsed_ms, int soft_drop) {
             state->gravity_elapsed_ms -= gravity;
             if (!try_move(state, 0, -1)) {
                 break;
+            }
+            if (soft_drop) {
+                state->score += 1;
             }
         }
     }
@@ -741,11 +832,17 @@ int sft_game_command(SFTGameState *state, int command) {
         return 1;
     }
     case SFT_CMD_SOFT_DROP:
-        return try_move(state, 0, -1);
-    case SFT_CMD_HARD_DROP:
-        while (try_move(state, 0, -1)) {}
+        if (!try_move(state, 0, -1)) {
+            return 0;
+        }
+        state->score += 1;
+        return 1;
+    case SFT_CMD_HARD_DROP: {
+        int moved = drop_to_surface(state);
+        state->score += moved * 2;
         lock_piece(state);
         return 1;
+    }
     case SFT_CMD_ROTATE_CW: {
         int was_grounded = state->grounded;
         int previous_lowest_y = state->lowest_y;

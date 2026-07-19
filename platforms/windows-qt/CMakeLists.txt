@@ -62,6 +62,15 @@ if(BUILD_TESTING)
         ../../macos-native-gui/portable/include
     )
     add_test(NAME game-core-pc-scout COMMAND game-core-pc-scout-tests)
+
+    add_executable(game-core-scoring-tests
+        ../../macos-native-gui/portable/tests/game_core_scoring_tests.c
+        ../../macos-native-gui/portable/game_core.c
+    )
+    target_include_directories(game-core-scoring-tests PRIVATE
+        ../../macos-native-gui/portable/include
+    )
+    add_test(NAME game-core-scoring COMMAND game-core-scoring-tests)
 endif()
 
 add_custom_command(TARGET solution-finder-enhanced POST_BUILD
