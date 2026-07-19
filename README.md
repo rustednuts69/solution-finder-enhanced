@@ -13,6 +13,13 @@ sh macos-native-gui/build_app.sh
 open "dist/Solution Finder Enhanced.app"
 ```
 
+To create a compressed DMG containing the app and an Applications shortcut:
+
+```sh
+sh macos-native-gui/build_dmg.sh
+open "dist/Solution Finder Enhanced.dmg"
+```
+
 Requirements:
 
 - macOS 13 or newer

@@ -417,6 +417,22 @@ struct FumenEditorSnapshot {
     let selectedOpeningVariationID: String
 }
 
+struct PCScoutOutcome: Identifiable {
+    let pieces: Int
+    let clearLines: Int
+    let percent: Double
+    let successes: Int
+    let total: Int
+    let usesActiveQueue: Bool
+
+    var id: Int { pieces }
+}
+
+private struct PCScoutTarget {
+    let pieces: Int
+    let clearLines: Int
+}
+
 struct FumenOpeningPreset: Identifiable, Hashable {
     let id: String
     let name: String
@@ -1472,6 +1488,13 @@ final class AppModel: ObservableObject {
     @Published var fumenPanelTab: FumenPanelTab = .editor
     @Published var embeddedOutputURL: URL?
     @Published var playSettingsApplyToken = 0
+    @Published var playCurrentLevel = 1
+    @Published var playLevelProgress = 0
+    @Published var playCurrentLockDelay = 500
+    @Published var playLevelSelectionRequest: Int?
+    @Published var pcScoutOutcomes: [PCScoutOutcome] = []
+    @Published var pcScoutStatus = "PC Scout is off"
+    @Published var isPCScoutRunning = false
     private var isAutoUpdatingCommandHeight = false
 
     let workspaceURL: URL
@@ -1483,6 +1506,14 @@ final class AppModel: ObservableObject {
     let setupFieldURL: URL
     let fumenURL: URL
     private var runningProcess: Process?
+    private var pcScoutProcess: Process?
+    private var pcScoutRequestID: UUID?
+    private var pcScoutTargets: [PCScoutTarget] = []
+    private var pcScoutTargetIndex = 0
+    private var pcScoutFieldURL: URL?
+    private var pcScoutGame: SFTGameState?
+    private var pcScoutDropMode = "softdrop"
+    private var pcScoutUsesActiveQueue = true
     private var terminationObserver: NSObjectProtocol?
 
     init() {
@@ -1515,6 +1546,7 @@ final class AppModel: ObservableObject {
                 NotificationCenter.default.removeObserver(terminationObserver)
             }
             runningProcess?.terminate()
+            pcScoutProcess?.terminate()
         }
     }
 
@@ -1692,6 +1724,10 @@ final class AppModel: ObservableObject {
 
     func run() {
         guard !isRunning else { return }
+        guard !isPCScoutRunning else {
+            status = "Cancel PC Scout before starting another search"
+            return
+        }
         guard FileManager.default.isExecutableFile(atPath: runnerURL.path) else {
             status = "Missing runner at \(runnerURL.path)"
             return
@@ -1828,6 +1864,262 @@ final class AppModel: ObservableObject {
         runningProcess?.terminate()
     }
 
+    func runPCScout(game sourceGame: SFTGameState, dropMode: String, useActiveQueue: Bool) {
+        guard !isRunning else {
+            pcScoutStatus = "Another sfinder search is running"
+            return
+        }
+        guard !isPCScoutRunning else { return }
+        guard FileManager.default.isExecutableFile(atPath: runnerURL.path) else {
+            pcScoutStatus = "SFinder runner is unavailable"
+            return
+        }
+
+        var game = sourceGame
+
+        var candidates = Array(
+            repeating: SFTPCScoutCandidate(pieces: 0, clear_lines: 0),
+            count: 2
+        )
+        let candidateCount = candidates.withUnsafeMutableBufferPointer { buffer in
+            sft_game_pc_scout_candidates(&game, 7, buffer.baseAddress, Int32(buffer.count))
+        }
+        pcScoutOutcomes = []
+        guard candidateCount > 0 else {
+            pcScoutStatus = "No perfect-clear window exists within 7 pieces"
+            return
+        }
+
+        let fieldURL = inputURL.appendingPathComponent("pc-scout-field.txt")
+        pcScoutTargets = candidates.prefix(min(Int(candidateCount), candidates.count)).map {
+            PCScoutTarget(pieces: Int($0.pieces), clearLines: Int($0.clear_lines))
+        }
+        pcScoutTargetIndex = 0
+        pcScoutFieldURL = fieldURL
+        pcScoutGame = game
+        pcScoutDropMode = dropMode == "harddrop" ? "harddrop" : "softdrop"
+        pcScoutUsesActiveQueue = useActiveQueue
+        pcScoutRequestID = UUID()
+        isPCScoutRunning = true
+        pcScoutStatus = useActiveQueue
+            ? "Analyzing current + next pieces..."
+            : "Analyzing random 7-bag..."
+        runNextPCScoutTarget()
+    }
+
+    func cancelPCScout() {
+        pcScoutRequestID = nil
+        if pcScoutProcess?.isRunning == true {
+            pcScoutProcess?.terminate()
+        }
+        pcScoutProcess = nil
+        pcScoutGame = nil
+        isPCScoutRunning = false
+        pcScoutStatus = "PC Scout canceled"
+    }
+
+    func invalidatePCScout(status: String = "Board changed; analyze again") {
+        if isPCScoutRunning {
+            cancelPCScout()
+        }
+        pcScoutOutcomes = []
+        pcScoutStatus = status
+    }
+
+    private func runNextPCScoutTarget() {
+        guard let requestID = pcScoutRequestID,
+              let fieldURL = pcScoutFieldURL,
+              var game = pcScoutGame else {
+            isPCScoutRunning = false
+            return
+        }
+        guard pcScoutTargets.indices.contains(pcScoutTargetIndex) else {
+            isPCScoutRunning = false
+            pcScoutProcess = nil
+            pcScoutRequestID = nil
+            pcScoutGame = nil
+            pcScoutStatus = pcScoutOutcomes.contains(where: { $0.successes > 0 })
+                ? "PC Scout finished"
+                : "No perfect clear found in the checked windows"
+            return
+        }
+
+        let target = pcScoutTargets[pcScoutTargetIndex]
+        pcScoutStatus = "Checking \(target.pieces)-piece window..."
+        var fieldBuffer = Array(
+            repeating: CChar(0),
+            count: Int(SFT_GAME_FIELD_TEXT_CAPACITY)
+        )
+        let fieldLength = fieldBuffer.withUnsafeMutableBufferPointer { buffer in
+            sft_game_write_sfinder_field(
+                &game,
+                Int32(target.clearLines),
+                buffer.baseAddress,
+                Int32(buffer.count)
+            )
+        }
+        guard fieldLength > 0 else {
+            isPCScoutRunning = false
+            pcScoutRequestID = nil
+            pcScoutGame = nil
+            pcScoutStatus = "Could not prepare the current field"
+            return
+        }
+        let fieldBytes = fieldBuffer.prefix(Int(fieldLength)).map { UInt8(bitPattern: $0) }
+        let fieldText = String(decoding: fieldBytes, as: UTF8.self)
+        do {
+            try FileManager.default.createDirectory(at: inputURL, withIntermediateDirectories: true)
+            try fieldText.write(to: fieldURL, atomically: true, encoding: .utf8)
+        } catch {
+            isPCScoutRunning = false
+            pcScoutRequestID = nil
+            pcScoutGame = nil
+            pcScoutStatus = "Could not write PC Scout field: \(error.localizedDescription)"
+            return
+        }
+        let searchPattern = pcScoutPattern(for: target, game: &game)
+        guard !searchPattern.isEmpty else {
+            isPCScoutRunning = false
+            pcScoutRequestID = nil
+            pcScoutGame = nil
+            pcScoutStatus = "Could not read the active piece queue"
+            return
+        }
+        let args = [
+            "percent",
+            "-fp", fieldURL.path,
+            "-c", String(target.clearLines),
+            "-p", searchPattern,
+            "-H", pcScoutUsesActiveQueue ? "avoid" : "use",
+            "-d", pcScoutDropMode,
+            "-K", "srs",
+            "-th", "1",
+            "-fc", "0",
+            "-td", "0"
+        ]
+
+        let process = Process()
+        process.executableURL = runnerURL
+        process.arguments = args
+        process.currentDirectoryURL = workspaceURL
+        process.qualityOfService = .utility
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            pcScoutProcess = process
+        } catch {
+            isPCScoutRunning = false
+            pcScoutProcess = nil
+            pcScoutRequestID = nil
+            pcScoutGame = nil
+            pcScoutStatus = "PC Scout failed to start: \(error.localizedDescription)"
+            return
+        }
+
+        let started = Date()
+        Task.detached(priority: .utility) {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            let exitCode = process.terminationStatus
+            await MainActor.run {
+                guard self.pcScoutRequestID == requestID,
+                      self.pcScoutProcess === process else { return }
+                self.pcScoutProcess = nil
+
+                guard exitCode == 0,
+                      let outcome = self.parsePCScoutOutcome(
+                        output,
+                        pieces: target.pieces,
+                        clearLines: target.clearLines,
+                        usesActiveQueue: self.pcScoutUsesActiveQueue
+                      ) else {
+                    self.isPCScoutRunning = false
+                    self.pcScoutRequestID = nil
+                    self.pcScoutGame = nil
+                    self.pcScoutStatus = exitCode == 15
+                        ? "PC Scout canceled"
+                        : "PC Scout could not read sfinder's result"
+                    DetectionDebugLog.shared.appendBlock(
+                        title: "PC Scout failed: \(target.pieces) pieces, exit \(exitCode)",
+                        lines: [output]
+                    )
+                    return
+                }
+
+                self.pcScoutOutcomes.append(outcome)
+                self.pcScoutOutcomes.sort { $0.pieces < $1.pieces }
+                let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
+                DetectionDebugLog.shared.appendBlock(
+                    title: "PC Scout: \(target.pieces) pieces / \(target.clearLines) lines",
+                    lines: [
+                        String(format: "Chance %.2f%% (%d/%d)", outcome.percent, outcome.successes, outcome.total),
+                        "Mode \(self.pcScoutDropMode), source \(outcome.usesActiveQueue ? "active queue" : "random bag"), elapsed \(elapsed)s"
+                    ]
+                )
+                self.pcScoutTargetIndex += 1
+                self.runNextPCScoutTarget()
+            }
+        }
+    }
+
+    private func parsePCScoutOutcome(
+        _ output: String,
+        pieces: Int,
+        clearLines: Int,
+        usesActiveQueue: Bool
+    ) -> PCScoutOutcome? {
+        let pattern = #"success\s*=\s*([0-9]+(?:\.[0-9]+)?)%\s*\((\d+)/(\d+)\)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(
+                in: output,
+                range: NSRange(output.startIndex..., in: output)
+              ),
+              let percentRange = Range(match.range(at: 1), in: output),
+              let successRange = Range(match.range(at: 2), in: output),
+              let totalRange = Range(match.range(at: 3), in: output),
+              let percent = Double(output[percentRange]),
+              let successes = Int(output[successRange]),
+              let total = Int(output[totalRange]) else {
+            return nil
+        }
+        return PCScoutOutcome(
+            pieces: pieces,
+            clearLines: clearLines,
+            percent: percent,
+            successes: successes,
+            total: total,
+            usesActiveQueue: usesActiveQueue
+        )
+    }
+
+    private func pcScoutPattern(for target: PCScoutTarget, game: inout SFTGameState) -> String {
+        guard pcScoutUsesActiveQueue else {
+            return "*p\(min(target.pieces + 1, 7))"
+        }
+
+        var patternBuffer = Array(
+            repeating: CChar(0),
+            count: Int(SFT_GAME_PATTERN_TEXT_CAPACITY)
+        )
+        let patternLength = patternBuffer.withUnsafeMutableBufferPointer { buffer in
+            sft_game_write_active_patterns(
+                &game,
+                Int32(target.pieces),
+                buffer.baseAddress,
+                Int32(buffer.count)
+            )
+        }
+        guard patternLength > 0 else {
+            return ""
+        }
+        let bytes = patternBuffer.prefix(Int(patternLength)).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
     func paintFumenCell(_ index: Int, value: Int) {
         guard nativeFumenCells.indices.contains(index) else { return }
         if fumenRowFill {
@@ -1881,8 +2173,10 @@ final class AppModel: ObservableObject {
         saveCurrentFumenPage()
     }
 
-    func clearFumenCells() {
+    func clearCurrentFumenPage() {
         nativeFumenCells = Array(repeating: 0, count: nativeFumenCells.count)
+        fumenOperation = FumenOperation()
+        fumenPlaceMino = false
         saveCurrentFumenPage()
         updateCommandHeightIfNeeded()
     }
@@ -2127,7 +2421,12 @@ final class AppModel: ObservableObject {
         if runningProcess?.isRunning == true {
             runningProcess?.terminate()
         }
+        if pcScoutProcess?.isRunning == true {
+            pcScoutProcess?.terminate()
+        }
         runningProcess = nil
+        pcScoutProcess = nil
+        pcScoutRequestID = nil
     }
 
     func refreshFiles() {
@@ -2519,9 +2818,18 @@ enum WorkspaceLocator {
     }
 }
 
+@MainActor
+final class WebViewStore: ObservableObject {
+    let webView = WKWebView()
+}
+
 struct FumenPanel: View {
     @ObservedObject var model: AppModel
-    @State private var webView = WKWebView()
+    @StateObject private var webViewStore = WebViewStore()
+
+    private var webView: WKWebView {
+        webViewStore.webView
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2774,7 +3082,11 @@ struct WebView: NSViewRepresentable {
 
 struct OpenerImporterView: View {
     @StateObject private var model = OpenerImporterModel()
-    @State private var webView = WKWebView()
+    @StateObject private var webViewStore = WebViewStore()
+
+    private var webView: WKWebView {
+        webViewStore.webView
+    }
 
     private let boardCellSize: CGFloat = 18
     private var boardColumns: [GridItem] {
@@ -3915,6 +4227,140 @@ struct HeldGameInput {
     var elapsedMs = 0.0
     var repeatElapsedMs = 0.0
     var repeated = false
+    var pressedAtUptimeMs = ProcessInfo.processInfo.systemUptime * 1000.0
+}
+
+@MainActor
+final class PlayGameRuntime {
+    var game = SFTGameState()
+    var heldInputs: [String: HeldGameInput] = [:]
+    var inputPressCounter = 0
+    var statsRefreshElapsedMs = 0.0
+    var lastFrameTimestamp: Date?
+}
+
+struct PlayGamePresentation: Equatable {
+    var visible = Array(repeating: Int32(0), count: Int(SFT_GAME_HEIGHT * SFT_GAME_WIDTH))
+    var ghosts = Array(repeating: Int32(0), count: Int(SFT_GAME_HEIGHT * SFT_GAME_WIDTH))
+    var hold: Int32 = 0
+    var next = Array(repeating: Int32(0), count: 5)
+    var piecesLocked: Int32 = 0
+    var linesCleared: Int32 = 0
+    var gravityLevel: Int32 = 1
+    var lastClearLines: Int32 = 0
+    var lastClearTSpin: Int32 = 0
+    var lastClearTSpinMini: Int32 = 0
+}
+
+struct PlayGameBoardGrid: View, Equatable {
+    let visible: [Int32]
+    let ghosts: [Int32]
+
+    nonisolated static func == (lhs: PlayGameBoardGrid, rhs: PlayGameBoardGrid) -> Bool {
+        lhs.visible == rhs.visible && lhs.ghosts == rhs.ghosts
+    }
+
+    var body: some View {
+        Canvas(opaque: true, rendersAsynchronously: false) { context, _ in
+            let cellSize: CGFloat = 20
+            let spacing: CGFloat = 2
+            for displayIndex in 0..<(Int(SFT_GAME_HEIGHT) * Int(SFT_GAME_WIDTH)) {
+                let x = displayIndex % Int(SFT_GAME_WIDTH)
+                let displayY = displayIndex / Int(SFT_GAME_WIDTH)
+                let gameY = Int(SFT_GAME_HEIGHT) - 1 - displayY
+                let renderIndex = gameY * Int(SFT_GAME_WIDTH) + x
+                let cellValue = Int(visible[renderIndex])
+                let ghostValue = Int(ghosts[renderIndex])
+                let rect = CGRect(
+                    x: CGFloat(x) * (cellSize + spacing),
+                    y: CGFloat(displayY) * (cellSize + spacing),
+                    width: cellSize,
+                    height: cellSize
+                )
+                let fill = cellValue == 0 && ghostValue > 0
+                    ? fumenCellColor(ghostValue).opacity(0.28)
+                    : fumenCellColor(cellValue)
+                let stroke = ghostValue > 0 && cellValue == 0
+                    ? fumenCellColor(ghostValue).opacity(0.85)
+                    : Color(nsColor: .separatorColor)
+                context.fill(Path(rect), with: .color(fill))
+                context.stroke(
+                    Path(rect.insetBy(dx: 0.5, dy: 0.5)),
+                    with: .color(stroke),
+                    lineWidth: ghostValue > 0 && cellValue == 0 ? 1.2 : 0.5
+                )
+            }
+        }
+        .frame(
+            width: CGFloat(SFT_GAME_WIDTH) * 20 + CGFloat(SFT_GAME_WIDTH - 1) * 2,
+            height: CGFloat(SFT_GAME_HEIGHT) * 20 + CGFloat(SFT_GAME_HEIGHT - 1) * 2
+        )
+    }
+}
+
+struct GameFrameTicker: NSViewRepresentable {
+    let isActive: Bool
+    let onFrame: (Date) -> Void
+
+    func makeNSView(context: Context) -> GameFrameTickerNSView {
+        let view = GameFrameTickerNSView()
+        view.onFrame = onFrame
+        view.setActive(isActive)
+        return view
+    }
+
+    func updateNSView(_ nsView: GameFrameTickerNSView, context: Context) {
+        nsView.onFrame = onFrame
+        nsView.setActive(isActive)
+    }
+
+    static func dismantleNSView(_ nsView: GameFrameTickerNSView, coordinator: Void) {
+        nsView.stop()
+    }
+}
+
+@MainActor
+final class GameFrameTickerNSView: NSView {
+    var onFrame: ((Date) -> Void)?
+    private var timer: Timer?
+    private var shouldRun = false
+
+    func setActive(_ active: Bool) {
+        guard shouldRun != active else { return }
+        shouldRun = active
+        updateTimer()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateTimer()
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func updateTimer() {
+        guard shouldRun, window != nil else {
+            stop()
+            return
+        }
+        guard timer == nil else { return }
+        let timer = Timer(
+            timeInterval: 1.0 / 60.0,
+            target: self,
+            selector: #selector(frameTimerFired),
+            userInfo: nil,
+            repeats: true
+        )
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @objc private func frameTimerFired() {
+        onFrame?(Date())
+    }
 }
 
 struct PlayableGameView: View {
@@ -3922,13 +4368,14 @@ struct PlayableGameView: View {
     let screenshotAction: () -> Void
     let commitAction: () -> Void
     let detectOpeningAction: ([Int], String?, @escaping ([OpeningDetectionResult]) -> Void) -> Void
-    @State private var game = SFTGameState()
-    @State private var heldInputs: [String: HeldGameInput] = [:]
+    @State private var runtime = PlayGameRuntime()
+    @State private var presentation = PlayGamePresentation()
+    @State private var boardRenderRevision = 0
+    @State private var statsRefreshRevision = 0
     @State private var focusToken = 0
     @State private var lastAutoExportedLockCount: Int32 = 0
     @State private var suppressPlayFumenReload = false
     @State private var undoStack: [SFTGameState] = []
-    @State private var inputPressCounter = 0
     @State private var gameStartedAt = Date()
     @State private var gameHasStarted = false
     @State private var autoOpenerDetectionDone = false
@@ -3940,43 +4387,114 @@ struct PlayableGameView: View {
     @State private var autoDetectedOpenerMirrored: Bool?
     @State private var autoDetectedEarlyVariantDetection = false
     @State private var autoOpeningCycleStartPieceCount: Int32 = 0
-    @AppStorage("play.control.left") private var controlLeft = "a"
-    @AppStorage("play.control.right") private var controlRight = "d"
-    @AppStorage("play.control.softDrop") private var controlSoftDrop = "s"
-    @AppStorage("play.control.hardDrop") private var controlHardDrop = "space"
-    @AppStorage("play.control.rotateCW") private var controlRotateCW = "w"
-    @AppStorage("play.control.rotateCCW") private var controlRotateCCW = "q"
-    @AppStorage("play.control.rotate180") private var controlRotate180 = "e"
-    @AppStorage("play.control.hold") private var controlHold = "c"
-    @AppStorage("play.control.undo") private var controlUndo = "z"
-    @AppStorage("play.control.reset") private var controlReset = "r"
-    @AppStorage("play.tuning.das") private var tuningAutoShiftMs = 130.0
-    @AppStorage("play.tuning.arr") private var tuningRepeatMs = 28.0
-    @AppStorage("play.tuning.softDrop") private var tuningSoftDropMs = 75.0
-    @AppStorage("play.tuning.gravity") private var tuningGravityMs = 1000.0
-    @AppStorage("play.tuning.lockDelay") private var tuningLockDelayMs = 500.0
-    @AppStorage("play.tuning.gravityEnabled") private var gravityEnabled = true
-    @AppStorage("play.tuning.infiniteLockDelay") private var infiniteLockDelay = false
-    @AppStorage("play.tuning.infiniteHold") private var infiniteHold = false
-    @AppStorage("play.previewCellSize") private var previewCellSize = 14.0
-    @AppStorage("play.customQueue") private var customQueue = ""
-    @AppStorage("play.customHold") private var customHold = "-"
-    @AppStorage("play.exportIncludeActive") private var exportIncludeActive = false
-    private let frameTimer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
+    @State private var pcScoutRefreshID = UUID()
+    @State private var pcScoutRefreshPending = false
+    @AppStorage("play.pcScoutEnabled") private var pcScoutEnabled = false
+    @AppStorage("play.pcScoutSource") private var pcScoutSource = "active"
+    @AppStorage("play.pcScoutDropMode") private var pcScoutDropMode = "softdrop"
+    private var controlLeft: String { storedString("play.control.left", default: "a") }
+    private var controlRight: String { storedString("play.control.right", default: "d") }
+    private var controlSoftDrop: String { storedString("play.control.softDrop", default: "s") }
+    private var controlHardDrop: String { storedString("play.control.hardDrop", default: "space") }
+    private var controlRotateCW: String { storedString("play.control.rotateCW", default: "w") }
+    private var controlRotateCCW: String { storedString("play.control.rotateCCW", default: "q") }
+    private var controlRotate180: String { storedString("play.control.rotate180", default: "e") }
+    private var controlHold: String { storedString("play.control.hold", default: "c") }
+    private var controlUndo: String { storedString("play.control.undo", default: "z") }
+    private var controlReset: String { storedString("play.control.reset", default: "r") }
+    private var tuningAutoShiftMs: Double { storedDouble("play.tuning.das", default: 130) }
+    private var tuningRepeatMs: Double { storedDouble("play.tuning.arr", default: 28) }
+    private var tuningSoftDropMs: Double { storedDouble("play.tuning.softDrop", default: 75) }
+    private var tuningGravityLevel: Int { storedInt("play.tuning.gravityLevel", default: 1) }
+    private var tuningLockDelayMs: Double { storedDouble("play.tuning.lockDelay", default: 500) }
+    private var moveResetEnabled: Bool { storedBool("play.tuning.moveResetEnabled", default: true) }
+    private var moveResetLimit: Double { storedDouble("play.tuning.moveResetLimit", default: 15) }
+    private var stepResetEnabled: Bool { storedBool("play.tuning.stepResetEnabled", default: false) }
+    private var gravityEnabled: Bool { storedBool("play.tuning.gravityEnabled", default: true) }
+    private var levelProgressionEnabled: Bool { storedBool("play.tuning.levelProgression", default: false) }
+    private var infiniteLockDelay: Bool { storedBool("play.tuning.infiniteLockDelay", default: false) }
+    private var infiniteHold: Bool { storedBool("play.tuning.infiniteHold", default: false) }
+    private var previewCellSize: Double { storedDouble("play.previewCellSize", default: 14) }
+    private var customQueue: String { storedString("play.customQueue", default: "") }
+    private var customHold: String { storedString("play.customHold", default: "-") }
+    private var exportIncludeActive: Bool { storedBool("play.exportIncludeActive", default: false) }
 
     private let gameCellSize: CGFloat = 20
     private let gameCellSpacing: CGFloat = 2
     private let gameBoardPadding: CGFloat = 8
-    private let columns = Array(repeating: GridItem(.fixed(20), spacing: 2), count: 10)
+    private var game: SFTGameState {
+        get { runtime.game }
+        nonmutating set { runtime.game = newValue }
+    }
+
+    private var heldInputs: [String: HeldGameInput] {
+        get { runtime.heldInputs }
+        nonmutating set { runtime.heldInputs = newValue }
+    }
+
+    private var inputPressCounter: Int {
+        get { runtime.inputPressCounter }
+        nonmutating set { runtime.inputPressCounter = newValue }
+    }
+
+    private func storedString(_ key: String, default fallback: String) -> String {
+        UserDefaults.standard.string(forKey: key) ?? fallback
+    }
+
+    private func storedDouble(_ key: String, default fallback: Double) -> Double {
+        UserDefaults.standard.object(forKey: key) == nil ? fallback : UserDefaults.standard.double(forKey: key)
+    }
+
+    private func storedInt(_ key: String, default fallback: Int) -> Int {
+        UserDefaults.standard.object(forKey: key) == nil ? fallback : UserDefaults.standard.integer(forKey: key)
+    }
+
+    private func storedBool(_ key: String, default fallback: Bool) -> Bool {
+        UserDefaults.standard.object(forKey: key) == nil ? fallback : UserDefaults.standard.bool(forKey: key)
+    }
+
+    @MainActor
+    private func runPCScoutSmokeTestIfRequested() async {
+#if DEBUG
+        guard ProcessInfo.processInfo.environment["SFE_PC_SCOUT_TEST"] == "1" else { return }
+        var cells = Array(repeating: Int32(0), count: 240)
+        for x in 0..<6 { cells[22 * 10 + x] = 8 }
+        for x in 0..<5 { cells[21 * 10 + x] = 8 }
+        for x in 0..<4 { cells[20 * 10 + x] = 8 }
+        cells[19 * 10] = 8
+        var queue: [Int32] = [5, 1, 2, 6, 7, 4, 3]
+        sft_game_init_seeded(&game, 12345)
+        queue.withUnsafeMutableBufferPointer { buffer in
+            sft_game_set_custom_queue(&game, buffer.baseAddress, Int32(buffer.count))
+        }
+        cells.withUnsafeMutableBufferPointer { buffer in
+            sft_game_load_fumen_cells(&game, buffer.baseAddress)
+        }
+        model.runPCScout(game: game, dropMode: "softdrop", useActiveQueue: true)
+        while model.isPCScoutRunning {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        let outcomes = model.pcScoutOutcomes.map {
+            "\($0.pieces) pieces=\(String(format: "%.2f", $0.percent))%"
+        }.joined(separator: ", ")
+        print("SFE_PC_SCOUT_TEST_RESULT: \(model.pcScoutStatus) [\(outcomes)]")
+#endif
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 12) {
-                    piecePreview(title: "Hold", piece: Int(game.hold))
+                    piecePreview(title: "Hold", piece: Int(presentation.hold))
                         .frame(width: previewColumnWidth, alignment: .topLeading)
 
-                    FocusableGameBoard(focusToken: focusToken, onKey: handleKeyDown, onKeyUp: handleKeyUp, onUndo: undoGameAction) {
+                    FocusableGameBoard(
+                        focusToken: focusToken,
+                        renderRevision: boardRenderRevision,
+                        onKey: handleKeyDown,
+                        onKeyUp: handleKeyUp,
+                        onUndo: undoGameAction
+                    ) {
                         gameBoard
                     }
                     .frame(width: gameBoardOuterWidth, height: gameBoardOuterHeight)
@@ -3989,6 +4507,7 @@ struct PlayableGameView: View {
                 }
                 .fixedSize(horizontal: true, vertical: true)
                 gameBoardActions
+                pcScoutPanel
             }
             .frame(minWidth: 430, idealWidth: 460, alignment: .topLeading)
 
@@ -4002,8 +4521,12 @@ struct PlayableGameView: View {
             loadFromEditor()
             focusToken += 1
         }
-        .onReceive(frameTimer) { _ in
-            advanceFrame(elapsedMs: 1000.0 / 60.0)
+        .background {
+            GameFrameTicker(
+                isActive: model.fumenPanelTab == .play,
+                onFrame: handleFrameTick
+            )
+            .frame(width: 0, height: 0)
         }
         .onChange(of: model.fumenCode) { _ in
             guard model.fumenPanelTab == .play else { return }
@@ -4016,6 +4539,48 @@ struct PlayableGameView: View {
         .onChange(of: model.playSettingsApplyToken) { _ in
             applyQueueAndHold()
         }
+        .onChange(of: model.playLevelSelectionRequest) { requestedLevel in
+            guard let requestedLevel else { return }
+            sft_game_reset_level_progression(&game, Int32(requestedLevel))
+            model.playLevelSelectionRequest = nil
+            applyTuning()
+            refreshGamePresentation()
+        }
+        .onChange(of: model.fumenPanelTab) { tab in
+            if tab == .play, pcScoutEnabled {
+                schedulePCScout(immediate: true)
+            }
+        }
+        .onChange(of: pcScoutEnabled) { enabled in
+            if enabled {
+                schedulePCScout(immediate: true)
+            } else {
+                pcScoutRefreshID = UUID()
+                pcScoutRefreshPending = false
+                model.invalidatePCScout(status: "PC Scout is off")
+            }
+        }
+        .onChange(of: pcScoutSource) { _ in
+            schedulePCScout(immediate: true)
+        }
+        .onChange(of: pcScoutDropMode) { _ in
+            schedulePCScout(immediate: true)
+        }
+        .task {
+            await runPCScoutSmokeTestIfRequested()
+        }
+    }
+
+    private func handleFrameTick(_ timestamp: Date) {
+        guard model.fumenPanelTab == .play else {
+            runtime.lastFrameTimestamp = nil
+            return
+        }
+        let elapsedMs = runtime.lastFrameTimestamp.map {
+            max(1.0, min(250.0, timestamp.timeIntervalSince($0) * 1000.0))
+        } ?? (1000.0 / 60.0)
+        runtime.lastFrameTimestamp = timestamp
+        advanceFrame(elapsedMs: elapsedMs)
     }
 
     private var gameBoardActions: some View {
@@ -4046,22 +4611,8 @@ struct PlayableGameView: View {
     }
 
     private var gameBoard: some View {
-        LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(0..<(Int(SFT_GAME_HEIGHT) * Int(SFT_GAME_WIDTH)), id: \.self) { index in
-                let x = index % Int(SFT_GAME_WIDTH)
-                let y = Int(SFT_GAME_HEIGHT) - 1 - (index / Int(SFT_GAME_WIDTH))
-                let cellValue = Int(sft_game_cell(&game, Int32(x), Int32(y), 1))
-                let ghostValue = Int(sft_game_ghost_cell(&game, Int32(x), Int32(y)))
-                Rectangle()
-                    .fill(cellValue == 0 && ghostValue > 0 ? fumenCellColor(ghostValue).opacity(0.28) : fumenCellColor(cellValue))
-                    .overlay(
-                        Rectangle()
-                            .stroke(ghostValue > 0 && cellValue == 0 ? fumenCellColor(ghostValue).opacity(0.85) : Color(nsColor: .separatorColor), lineWidth: ghostValue > 0 && cellValue == 0 ? 1.2 : 0.5)
-                    )
-                    .frame(width: 20, height: 20)
-            }
-        }
-        .frame(width: gameBoardGridWidth, height: gameBoardGridHeight)
+        PlayGameBoardGrid(visible: presentation.visible, ghosts: presentation.ghosts)
+        .equatable()
         .padding(8)
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -4075,7 +4626,7 @@ struct PlayableGameView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(0..<5, id: \.self) { index in
-                pieceMini(Int(sft_game_queue_piece(&game, Int32(index))))
+                pieceMini(Int(presentation.next[index]))
             }
         }
         .font(.caption)
@@ -4084,9 +4635,11 @@ struct PlayableGameView: View {
     private var playStatsPanel: some View {
         GroupBox("Stats") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Pieces: \(game.pieces_locked)")
+                Text("Pieces: \(presentation.piecesLocked)")
                     .font(.body.monospacedDigit())
-                Text("Lines: \(game.lines_cleared)")
+                Text("Lines: \(presentation.linesCleared)")
+                    .font(.body.monospacedDigit())
+                Text("Level: \(presentation.gravityLevel)")
                     .font(.body.monospacedDigit())
                 if !lastClearText.isEmpty {
                     Text(lastClearText)
@@ -4104,16 +4657,160 @@ struct PlayableGameView: View {
         }
     }
 
+    private var pcScoutPanel: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Toggle("Enabled", isOn: $pcScoutEnabled)
+                        .toggleStyle(.switch)
+
+                    Spacer()
+
+                    Picker("Source", selection: $pcScoutSource) {
+                        Text("Active queue").tag("active")
+                        Text("Random bag").tag("random")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 210)
+                    .disabled(!pcScoutEnabled)
+                }
+
+                HStack(spacing: 8) {
+                    Picker("Reach", selection: $pcScoutDropMode) {
+                        Text("Hard drop").tag("harddrop")
+                        Text("Soft drop").tag("softdrop")
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .disabled(!pcScoutEnabled)
+
+                    Button {
+                        pcScoutRefreshID = UUID()
+                        pcScoutRefreshPending = false
+                        model.invalidatePCScout(status: "Refreshing PC Scout...")
+                        runPCScoutNow()
+                    } label: {
+                        Label("Analyze", systemImage: "scope")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!pcScoutEnabled || model.isRunning || model.isPCScoutRunning)
+
+                    if model.isPCScoutRunning {
+                        Button {
+                            model.cancelPCScout()
+                        } label: {
+                            Image(systemName: "stop.fill")
+                        }
+                        .help("Cancel PC Scout")
+                    }
+                }
+
+                ForEach(model.pcScoutOutcomes) { outcome in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("PC in \(outcome.pieces) pieces")
+                                .font(.body.weight(.semibold))
+                            Spacer()
+                            Text(
+                                outcome.usesActiveQueue
+                                    ? (outcome.successes > 0 ? "Available" : "No PC")
+                                    : String(format: "%.2f%%", outcome.percent)
+                            )
+                                .font(.body.monospacedDigit().weight(.semibold))
+                        }
+                        Text(
+                            outcome.usesActiveQueue
+                                ? "\(outcome.successes)/\(outcome.total) hold routes · \(outcome.clearLines) lines"
+                                : "\(outcome.successes)/\(outcome.total) bags · \(outcome.clearLines) lines"
+                        )
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    if model.isPCScoutRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(model.pcScoutStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+        } label: {
+            HStack(spacing: 8) {
+                Text("PC Scout")
+                Text("Uses extra CPU and may cause lag")
+                    .font(.caption)
+                    .fontWeight(.regular)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func runPCScoutNow() {
+        guard pcScoutEnabled, model.fumenPanelTab == .play else { return }
+        model.runPCScout(
+            game: game,
+            dropMode: pcScoutDropMode,
+            useActiveQueue: pcScoutSource == "active"
+        )
+    }
+
+    private func schedulePCScout(immediate: Bool = false, afterPlacement: Bool = false) {
+        pcScoutRefreshID = UUID()
+        let refreshID = pcScoutRefreshID
+        let hadPendingRefresh = pcScoutRefreshPending
+        pcScoutRefreshPending = false
+        guard pcScoutEnabled, model.fumenPanelTab == .play else {
+            if model.isPCScoutRunning
+                || !model.pcScoutOutcomes.isEmpty
+                || model.pcScoutStatus != "PC Scout is off" {
+                model.invalidatePCScout(status: "PC Scout is off")
+            }
+            return
+        }
+        let wasRunning = model.isPCScoutRunning
+        guard hasPCScoutCandidate() else {
+            model.invalidatePCScout(status: "No perfect-clear window exists within 7 pieces")
+            return
+        }
+        model.invalidatePCScout(status: "Waiting to analyze current position...")
+        let delayMs = immediate ? 0 : (afterPlacement ? (wasRunning || hadPendingRefresh ? 75 : 0) : 250)
+        pcScoutRefreshPending = delayMs > 0
+
+        Task { @MainActor in
+            if delayMs > 0 {
+                try? await Task.sleep(for: .milliseconds(delayMs))
+            }
+            guard refreshID == pcScoutRefreshID,
+                  pcScoutEnabled,
+                  model.fumenPanelTab == .play else { return }
+            pcScoutRefreshPending = false
+            runPCScoutNow()
+        }
+    }
+
+    private func hasPCScoutCandidate() -> Bool {
+        var sourceGame = game
+        var candidate = SFTPCScoutCandidate(pieces: 0, clear_lines: 0)
+        return sft_game_pc_scout_candidates(&sourceGame, 7, &candidate, 1) > 0
+    }
+
     private var piecesPerSecond: Double {
+        _ = statsRefreshRevision
         guard gameHasStarted else { return 0 }
         let elapsed = max(0.001, Date().timeIntervalSince(gameStartedAt))
-        return Double(game.pieces_locked) / elapsed
+        return Double(presentation.piecesLocked) / elapsed
     }
 
     private var lastClearText: String {
-        let lineCount = Int(game.last_clear_lines)
-        let isTSpin = game.last_clear_t_spin != 0
-        let isMini = game.last_clear_t_spin_mini != 0
+        let lineCount = Int(presentation.lastClearLines)
+        let isTSpin = presentation.lastClearTSpin != 0
+        let isMini = presentation.lastClearTSpinMini != 0
         guard lineCount > 0 || isTSpin else { return "" }
 
         let lineName: String
@@ -4249,6 +4946,8 @@ struct PlayableGameView: View {
         undoStack.removeAll()
         lastAutoExportedLockCount = game.pieces_locked
         resetPlayStats()
+        schedulePCScout()
+        refreshGamePresentation(force: true)
     }
 
     private func resetGame() {
@@ -4259,10 +4958,14 @@ struct PlayableGameView: View {
         undoStack.removeAll()
         lastAutoExportedLockCount = game.pieces_locked
         resetPlayStats()
+        schedulePCScout()
+        refreshGamePresentation(force: true)
         focusToken += 1
     }
 
     private func resetPlayStats() {
+        runtime.statsRefreshElapsedMs = 0
+        statsRefreshRevision &+= 1
         gameStartedAt = Date()
         gameHasStarted = false
         autoOpenerDetectionDone = false
@@ -4284,6 +4987,7 @@ struct PlayableGameView: View {
         applyTuning()
         startGameIfNeeded()
         _ = performGameCommand(command)
+        refreshGamePresentation()
         focusToken += 1
     }
 
@@ -4321,15 +5025,15 @@ struct PlayableGameView: View {
         }
 
         exportFumenIfPieceLocked()
+        if command == SFT_CMD_HOLD, game.pieces_locked == before.pieces_locked {
+            schedulePCScout()
+        }
         return true
     }
 
     @discardableResult
     private func performInstantSoftDrop() -> Bool {
-        var changed = false
-        while sft_game_command(&game, Int32(SFT_CMD_SOFT_DROP.rawValue)) != 0 {
-            changed = true
-        }
+        let changed = sft_game_drop_to_surface(&game) != 0
         guard changed else { return false }
         exportFumenIfPieceLocked()
         return true
@@ -4370,12 +5074,83 @@ struct PlayableGameView: View {
             autoOpenerDetectionStatus = ""
         }
         exportGameBoardToFumen(includeActive: false, switchToEditor: false, status: "Undid play move")
+        schedulePCScout()
+        refreshGamePresentation(force: true)
         focusToken += 1
     }
 
     private func applyTuning() {
-        sft_game_set_tuning(&game, Int32(tuningGravityMs.rounded()), Int32(tuningLockDelayMs.rounded()))
+        sft_game_set_gravity_level(&game, Int32(tuningGravityLevel))
+        sft_game_set_level_progression(&game, levelProgressionEnabled ? 1 : 0)
+        let usesProgressedLockDelay = levelProgressionEnabled
+            && game.gravity_level >= 20
+            && game.gravity_level > game.gravity_base_level
+        let lockDelay = usesProgressedLockDelay
+            ? sft_game_lock_delay_for_level(game.gravity_level)
+            : Int32(tuningLockDelayMs.rounded())
+        sft_game_set_lock_delay(&game, lockDelay)
+        let resetMode: Int32 = stepResetEnabled ? 2 : (moveResetEnabled ? 1 : 0)
+        sft_game_set_lock_reset(&game, resetMode, Int32(moveResetLimit.rounded()))
         sft_game_set_options(&game, gravityEnabled ? 1 : 0, infiniteLockDelay ? 1 : 0, infiniteHold ? 1 : 0)
+        let currentLevel = Int(game.gravity_level)
+        let levelProgress = max(0, Int(game.lines_cleared - game.progression_start_lines)) % 10
+        if model.playCurrentLevel != currentLevel {
+            model.playCurrentLevel = currentLevel
+        }
+        if model.playLevelProgress != levelProgress {
+            model.playLevelProgress = levelProgress
+        }
+        if model.playCurrentLockDelay != Int(game.lock_delay_ms) {
+            model.playCurrentLockDelay = Int(game.lock_delay_ms)
+        }
+    }
+
+    private func refreshGamePresentation(force: Bool = false) {
+        var sourceGame = game
+        let cellCount = Int(SFT_GAME_HEIGHT * SFT_GAME_WIDTH)
+        var nextPresentation = PlayGamePresentation()
+        nextPresentation.visible = Array(repeating: 0, count: cellCount)
+        nextPresentation.ghosts = Array(repeating: 0, count: cellCount)
+        nextPresentation.visible.withUnsafeMutableBufferPointer { visibleBuffer in
+            nextPresentation.ghosts.withUnsafeMutableBufferPointer { ghostBuffer in
+                sft_game_write_render_cells(
+                    &sourceGame,
+                    visibleBuffer.baseAddress,
+                    ghostBuffer.baseAddress
+                )
+            }
+        }
+        nextPresentation.hold = sourceGame.hold
+        nextPresentation.next = (0..<5).map {
+            sft_game_queue_piece(&sourceGame, Int32($0))
+        }
+        nextPresentation.piecesLocked = sourceGame.pieces_locked
+        nextPresentation.linesCleared = sourceGame.lines_cleared
+        nextPresentation.gravityLevel = sourceGame.gravity_level
+        nextPresentation.lastClearLines = sourceGame.last_clear_lines
+        nextPresentation.lastClearTSpin = sourceGame.last_clear_t_spin
+        nextPresentation.lastClearTSpinMini = sourceGame.last_clear_t_spin_mini
+
+        let boardChanged = nextPresentation.visible != presentation.visible
+            || nextPresentation.ghosts != presentation.ghosts
+        if force || nextPresentation != presentation {
+            presentation = nextPresentation
+            if force || boardChanged {
+                boardRenderRevision &+= 1
+            }
+        }
+
+        let currentLevel = Int(sourceGame.gravity_level)
+        let levelProgress = max(0, Int(sourceGame.lines_cleared - sourceGame.progression_start_lines)) % 10
+        if model.playCurrentLevel != currentLevel {
+            model.playCurrentLevel = currentLevel
+        }
+        if model.playLevelProgress != levelProgress {
+            model.playLevelProgress = levelProgress
+        }
+        if model.playCurrentLockDelay != Int(sourceGame.lock_delay_ms) {
+            model.playCurrentLockDelay = Int(sourceGame.lock_delay_ms)
+        }
     }
 
     private func applyQueueAndHold(spawnFromQueue: Bool = true) {
@@ -4394,6 +5169,8 @@ struct PlayableGameView: View {
         undoStack.removeAll()
         lastAutoExportedLockCount = game.pieces_locked
         resetPlayStats()
+        schedulePCScout()
+        refreshGamePresentation(force: true)
         focusToken += 1
     }
 
@@ -4424,6 +5201,7 @@ struct PlayableGameView: View {
         guard game.pieces_locked != lastAutoExportedLockCount else { return }
         lastAutoExportedLockCount = game.pieces_locked
         exportGameBoardToFumen(includeActive: false, switchToEditor: false, status: "Updated fumen after lock")
+        schedulePCScout(afterPlacement: true)
         if detectPerfectClearIfNeeded() {
             return
         }
@@ -4620,13 +5398,13 @@ struct PlayableGameView: View {
 
     private func advanceFrame(elapsedMs: Double) {
         guard gameHasStarted else { return }
-        applyTuning()
-        let softDropHeld = tuningSoftDropMs > 0 && heldInputs.values.contains { $0.command == SFT_CMD_SOFT_DROP }
-        let beforeTick = game
-        sft_game_tick(&game, Int32(elapsedMs.rounded()), softDropHeld ? 1 : 0)
+        let beforeFrame = game
+        // Soft drop timing is handled by the input repeater below. Passing it
+        // into the gravity tick would apply a second, level-dependent drop.
+        sft_game_tick(&game, Int32(min(elapsedMs, 100.0).rounded()), 0)
         var entryAppliedKeys = Set<String>()
-        if game.pieces_locked != beforeTick.pieces_locked {
-            pushUndoSnapshot(beforeTick)
+        if game.pieces_locked != beforeFrame.pieces_locked {
+            pushUndoSnapshot(beforeFrame)
             entryAppliedKeys = applyEntryMovementForHeldInputs()
         }
         exportFumenIfPieceLocked()
@@ -4634,7 +5412,6 @@ struct PlayableGameView: View {
         for key in sortedHeldInputKeys() {
             guard var input = heldInputs[key] else { continue }
             input.elapsedMs += elapsedMs
-            input.repeatElapsedMs += elapsedMs
             let command = input.command
             if isBlockedHorizontalRepeat(input) {
                 input.elapsedMs = 0
@@ -4657,7 +5434,37 @@ struct PlayableGameView: View {
             let delay = command == SFT_CMD_SOFT_DROP ? tuningSoftDropMs : (input.repeated ? tuningRepeatMs : tuningAutoShiftMs)
             let repeatInterval = command == SFT_CMD_SOFT_DROP ? tuningSoftDropMs : tuningRepeatMs
             let isRepeatable = command == SFT_CMD_LEFT || command == SFT_CMD_RIGHT || command == SFT_CMD_SOFT_DROP
-            if isRepeatable && input.elapsedMs >= delay {
+            if isRepeatable && !input.repeated && input.elapsedMs >= delay {
+                input.repeated = true
+                input.repeatElapsedMs = max(0, input.elapsedMs - delay)
+                if repeatInterval <= 0 {
+                    let maxRepeats = command == SFT_CMD_SOFT_DROP ? Int(SFT_GAME_HEIGHT) : Int(SFT_GAME_WIDTH)
+                    for _ in 0..<maxRepeats {
+                        let lockCount = game.pieces_locked
+                        let changed = performGameCommand(command)
+                        if !changed || game.pieces_locked != lockCount {
+                            break
+                        }
+                    }
+                    input.repeatElapsedMs = 0
+                } else {
+                    let lockCount = game.pieces_locked
+                    let changed = performGameCommand(command)
+                    if !changed || game.pieces_locked != lockCount {
+                        input.repeatElapsedMs = 0
+                    }
+                    while input.repeatElapsedMs >= repeatInterval {
+                        input.repeatElapsedMs -= repeatInterval
+                        let lockCount = game.pieces_locked
+                        let changed = performGameCommand(command)
+                        if !changed || game.pieces_locked != lockCount {
+                            input.repeatElapsedMs = 0
+                            break
+                        }
+                    }
+                }
+            } else if isRepeatable && input.repeated {
+                input.repeatElapsedMs += elapsedMs
                 if repeatInterval <= 0 {
                     let maxRepeats = command == SFT_CMD_SOFT_DROP ? Int(SFT_GAME_HEIGHT) : Int(SFT_GAME_WIDTH)
                     for _ in 0..<maxRepeats {
@@ -4674,14 +5481,40 @@ struct PlayableGameView: View {
                         let lockCount = game.pieces_locked
                         let changed = performGameCommand(command)
                         if !changed || game.pieces_locked != lockCount {
+                            input.repeatElapsedMs = 0
                             break
                         }
                     }
                 }
-                input.repeated = true
             }
             heldInputs[key] = input
         }
+        runtime.statsRefreshElapsedMs += elapsedMs
+        if runtime.statsRefreshElapsedMs >= 250 {
+            runtime.statsRefreshElapsedMs.formTruncatingRemainder(dividingBy: 250)
+            statsRefreshRevision &+= 1
+        }
+        if gameVisualStateChanged(from: beforeFrame, to: game) {
+            refreshGamePresentation()
+        }
+    }
+
+    private func gameVisualStateChanged(from before: SFTGameState, to after: SFTGameState) -> Bool {
+        before.current != after.current
+            || before.hold != after.hold
+            || before.rotation != after.rotation
+            || before.x != after.x
+            || before.y != after.y
+            || before.queue_index != after.queue_index
+            || before.queue_count != after.queue_count
+            || before.custom_queue_enabled != after.custom_queue_enabled
+            || before.game_over != after.game_over
+            || before.pieces_locked != after.pieces_locked
+            || before.lines_cleared != after.lines_cleared
+            || before.gravity_level != after.gravity_level
+            || before.last_clear_lines != after.last_clear_lines
+            || before.last_clear_t_spin != after.last_clear_t_spin
+            || before.last_clear_t_spin_mini != after.last_clear_t_spin_mini
     }
 
     private func sortedHeldInputKeys() -> [String] {
@@ -4721,18 +5554,39 @@ struct PlayableGameView: View {
     private func applyEntryMovementForHeldInputs() -> Set<String> {
         var appliedKeys = Set<String>()
         if let horizontal = latestHeldHorizontalInput(),
-           horizontal.input.repeated || horizontal.input.elapsedMs >= tuningAutoShiftMs {
+           inputIsCharged(horizontal.input, delayMs: tuningAutoShiftMs) {
             let repeats = tuningRepeatMs <= 0 ? Int(SFT_GAME_WIDTH) : 1
             if runEntryMovement(horizontal.input.command, maxRepeats: repeats) {
                 appliedKeys.insert(horizontal.key)
+                if var input = heldInputs[horizontal.key] {
+                    input.elapsedMs = max(input.elapsedMs, tuningAutoShiftMs)
+                    input.repeatElapsedMs = 0
+                    input.repeated = true
+                    heldInputs[horizontal.key] = input
+                }
             }
         }
         if let softDrop = heldInputs.first(where: { $0.value.command == SFT_CMD_SOFT_DROP }),
-           tuningSoftDropMs <= 0 || softDrop.value.repeated || softDrop.value.elapsedMs >= tuningSoftDropMs,
-           runEntryMovement(SFT_CMD_SOFT_DROP, maxRepeats: Int(SFT_GAME_HEIGHT)) {
+           tuningSoftDropMs <= 0 || inputIsCharged(softDrop.value, delayMs: tuningSoftDropMs),
+           runEntryMovement(
+               SFT_CMD_SOFT_DROP,
+               maxRepeats: tuningSoftDropMs <= 0 ? Int(SFT_GAME_HEIGHT) : 1
+           ) {
             appliedKeys.insert(softDrop.key)
+            if var input = heldInputs[softDrop.key] {
+                input.elapsedMs = max(input.elapsedMs, tuningSoftDropMs)
+                input.repeatElapsedMs = 0
+                input.repeated = true
+                heldInputs[softDrop.key] = input
+            }
         }
         return appliedKeys
+    }
+
+    private func inputIsCharged(_ input: HeldGameInput, delayMs: Double) -> Bool {
+        input.repeated
+            || input.elapsedMs >= delayMs
+            || ProcessInfo.processInfo.systemUptime * 1000.0 - input.pressedAtUptimeMs >= delayMs
     }
 
     private func runEntryMovement(_ command: SFTGameCommand, maxRepeats: Int) -> Bool {
@@ -4791,6 +5645,7 @@ struct PlayableGameView: View {
 
 struct FocusableGameBoard<Content: View>: NSViewRepresentable {
     let focusToken: Int
+    let renderRevision: Int
     let onKey: (String) -> Void
     let onKeyUp: (String) -> Void
     let onUndo: () -> Void
@@ -4802,6 +5657,7 @@ struct FocusableGameBoard<Content: View>: NSViewRepresentable {
 
     func makeNSView(context: Context) -> KeyHostingView<Content> {
         let view = KeyHostingView(rootView: content())
+        context.coordinator.lastRenderRevision = renderRevision
         view.onKey = onKey
         view.onKeyUp = onKeyUp
         view.onUndo = onUndo
@@ -4812,10 +5668,13 @@ struct FocusableGameBoard<Content: View>: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: KeyHostingView<Content>, context: Context) {
-        nsView.rootView = content()
         nsView.onKey = onKey
         nsView.onKeyUp = onKeyUp
         nsView.onUndo = onUndo
+        if context.coordinator.lastRenderRevision != renderRevision {
+            context.coordinator.lastRenderRevision = renderRevision
+            nsView.rootView = content()
+        }
         guard context.coordinator.lastFocusToken != focusToken else {
             return
         }
@@ -4827,6 +5686,7 @@ struct FocusableGameBoard<Content: View>: NSViewRepresentable {
 
     final class Coordinator {
         var lastFocusToken: Int?
+        var lastRenderRevision: Int?
     }
 
     final class KeyHostingView<Root: View>: NSHostingView<Root> {
@@ -4882,7 +5742,8 @@ private extension NSEvent {
 struct FumenEditorPane: View {
     @State private var lastPaintedIndex: Int?
     @State private var strokePaintValue: Int?
-    @State private var outputWebView = WKWebView()
+    @StateObject private var outputWebViewStore = WebViewStore()
+    @State private var playFumenCommitTask: Task<Void, Never>?
 
     @ObservedObject var model: AppModel
     let screenshotAction: () -> Void
@@ -4900,6 +5761,9 @@ struct FumenEditorPane: View {
     private let visibleCellIndices = Array(fumenVisibleTopRow * 10..<fumenVisibleBottomRow * 10)
     private let cellSize: CGFloat = 24
     private let cellSpacing: CGFloat = 2
+    private var outputWebView: WKWebView {
+        outputWebViewStore.webView
+    }
     private var boardSize: CGSize {
         CGSize(width: 10 * cellSize + 9 * cellSpacing, height: CGFloat(fumenVisibleRows) * cellSize + CGFloat(fumenVisibleRows - 1) * cellSpacing)
     }
@@ -5012,42 +5876,22 @@ struct FumenEditorPane: View {
                 }
             }
 
-            if model.fumenPanelTab == .output {
-                outputHTMLView
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.fumenPanelTab == .play {
-                ScrollView {
-                    PlayableGameView(
-                        model: model,
-                        screenshotAction: screenshotAction,
-                        commitAction: commitAction,
-                        detectOpeningAction: detectPlayableOpeningAction
-                    )
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(alignment: .top, spacing: 14) {
-                                boardAndOpeningsColumn
-                                fumenSideControls
-                            }
-                            VStack(alignment: .leading, spacing: 14) {
-                                boardAndOpeningsColumn
-                                fumenSideControls
-                            }
-                        }
-                        if model.fumenPanelTab == .editor && !isSetupMode {
-                            openingsSection
-                                .frame(maxWidth: .infinity)
-                        }
-                        if model.fumenPanelTab == .editor && isCoverMode {
-                            coverFumensSection
-                                .frame(maxWidth: .infinity)
-                        }
+            ZStack(alignment: .topLeading) {
+                playTabContent
+                    .opacity(model.fumenPanelTab == .play ? 1 : 0)
+                    .allowsHitTesting(model.fumenPanelTab == .play)
+                    .accessibilityHidden(model.fumenPanelTab != .play)
+
+                if model.fumenPanelTab != .play {
+                    switch model.fumenPanelTab {
+                    case .editor, .preview:
+                        editorTabContent
+                    case .output:
+                        outputHTMLView
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .play:
+                        EmptyView()
                     }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
         }
@@ -5058,6 +5902,72 @@ struct FumenEditorPane: View {
                 model.importScreenshotColors = false
             }
         }
+        .task {
+            await runTabStressTestIfRequested()
+        }
+        .onDisappear {
+            playFumenCommitTask?.cancel()
+        }
+    }
+
+    private var playTabContent: some View {
+        ScrollView {
+            PlayableGameView(
+                model: model,
+                screenshotAction: screenshotAction,
+                commitAction: schedulePlayFumenCommit,
+                detectOpeningAction: detectPlayableOpeningAction
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func schedulePlayFumenCommit() {
+        playFumenCommitTask?.cancel()
+        playFumenCommitTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            commitAction()
+        }
+    }
+
+    private var editorTabContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 14) {
+                        boardAndOpeningsColumn
+                        fumenSideControls
+                    }
+                    VStack(alignment: .leading, spacing: 14) {
+                        boardAndOpeningsColumn
+                        fumenSideControls
+                    }
+                }
+                if model.fumenPanelTab == .editor && !isSetupMode {
+                    openingsSection
+                        .frame(maxWidth: .infinity)
+                }
+                if model.fumenPanelTab == .editor && isCoverMode {
+                    coverFumensSection
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @MainActor
+    private func runTabStressTestIfRequested() async {
+#if DEBUG
+        guard ProcessInfo.processInfo.environment["SFE_TAB_STRESS_TEST"] == "1" else { return }
+        for index in 0..<80 {
+            if Task.isCancelled { return }
+            model.fumenPanelTab = FumenPanelTab.allCases[index % FumenPanelTab.allCases.count]
+            try? await Task.sleep(for: .milliseconds(40))
+        }
+        print("SFE_TAB_STRESS_TEST_PASSED")
+#endif
     }
 
     private var fumenToolbarControls: some View {
@@ -5263,10 +6173,10 @@ struct FumenEditorPane: View {
                 boardMoveControls
 
                 Button(role: .destructive) {
-                    model.clearFumenCells()
+                    model.clearCurrentFumenPage()
                     commitAction()
                 } label: {
-                    Label("Clear Board", systemImage: "trash")
+                    Label("Clear Page", systemImage: "trash")
                 }
             }
         }
@@ -5623,11 +6533,15 @@ struct FumenEditorPane: View {
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
-    @State private var webView = WKWebView()
+    @StateObject private var webViewStore = WebViewStore()
     @State private var autoImportTask: Task<Void, Never>?
     @State private var lastAutoImportedFumenCode = ""
     @State private var fumenImportToken = 0
     @State private var fumenPreviewImportToken = 0
+
+    private var webView: WKWebView {
+        webViewStore.webView
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -6445,32 +7359,7 @@ struct LeftPane: View {
                 if model.fumenPanelTab == .play {
                     PlaySettingsView(model: model)
                 } else {
-                    SettingsView(model: model)
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "lightbulb")
-                            .foregroundStyle(.secondary)
-                        Text(model.command.tip)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
-
-                    GroupBox("Patterns") {
-                        VStack(alignment: .leading, spacing: 5) {
-                            TextField("Pattern sequence", text: $model.patterns)
-                                .font(.system(.body, design: .monospaced))
-                                .textFieldStyle(.roundedBorder)
-                            Text("Use commas for fixed steps, *pN for any N pieces, and brackets for a piece pool. Examples: T,*p5 or [IJLOS]p5.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
+                    nonPlaySettingsContent
                 }
                 GroupBox("Fumen Code") {
                     VStack(spacing: 8) {
@@ -6521,6 +7410,37 @@ struct LeftPane: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
+
+    private var nonPlaySettingsContent: some View {
+        VStack(spacing: 12) {
+            SettingsView(model: model)
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "lightbulb")
+                    .foregroundStyle(.secondary)
+                Text(model.command.tip)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor)))
+
+            GroupBox("Patterns") {
+                VStack(alignment: .leading, spacing: 5) {
+                    TextField("Pattern sequence", text: $model.patterns)
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                    Text("Use commas for fixed steps, *pN for any N pieces, and brackets for a piece pool. Examples: T,*p5 or [IJLOS]p5.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
 }
 
 struct PlaySettingsView: View {
@@ -6538,9 +7458,13 @@ struct PlaySettingsView: View {
     @AppStorage("play.tuning.das") private var tuningAutoShiftMs = 130.0
     @AppStorage("play.tuning.arr") private var tuningRepeatMs = 28.0
     @AppStorage("play.tuning.softDrop") private var tuningSoftDropMs = 75.0
-    @AppStorage("play.tuning.gravity") private var tuningGravityMs = 1000.0
+    @AppStorage("play.tuning.gravityLevel") private var tuningGravityLevel = 1
     @AppStorage("play.tuning.lockDelay") private var tuningLockDelayMs = 500.0
+    @AppStorage("play.tuning.moveResetEnabled") private var moveResetEnabled = true
+    @AppStorage("play.tuning.moveResetLimit") private var moveResetLimit = 15.0
+    @AppStorage("play.tuning.stepResetEnabled") private var stepResetEnabled = false
     @AppStorage("play.tuning.gravityEnabled") private var gravityEnabled = true
+    @AppStorage("play.tuning.levelProgression") private var levelProgressionEnabled = false
     @AppStorage("play.tuning.infiniteLockDelay") private var infiniteLockDelay = false
     @AppStorage("play.tuning.infiniteHold") private var infiniteHold = false
     @AppStorage("play.previewCellSize") private var previewCellSize = 14.0
@@ -6600,8 +7524,26 @@ struct PlaySettingsView: View {
                     playTuningRow("DAS", value: $tuningAutoShiftMs, range: 0...300, suffix: "ms")
                     playTuningRow("ARR", value: $tuningRepeatMs, range: 0...120, suffix: "ms")
                     playTuningRow("Soft", value: $tuningSoftDropMs, range: 0...250, suffix: "ms")
-                    playTuningRow("Gravity", value: $tuningGravityMs, range: 50...1500, suffix: "ms")
-                    playTuningRow("Lock", value: $tuningLockDelayMs, range: 0...1000, suffix: "ms")
+                    GridRow {
+                        Text("Level")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker("Level", selection: gravityLevelSelection) {
+                            ForEach(1...30, id: \.self) { level in
+                                Text("Level \(level)").tag(level)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                    GridRow {
+                        Text("Current")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(levelProgressionStatus)
+                            .font(.caption.monospacedDigit())
+                    }
+                    playTuningRow("Lock", value: lockDelaySelection, range: 0...1000, suffix: "ms")
+                    playTuningRow("Move limit", value: $moveResetLimit, range: 1...99, suffix: "", enabled: moveResetEnabled)
                     playTuningRow("Preview", value: $previewCellSize, range: 8...20, suffix: "px")
                     GridRow {
                         Text("Rules")
@@ -6609,6 +7551,9 @@ struct PlaySettingsView: View {
                             .foregroundStyle(.secondary)
                         VStack(alignment: .leading) {
                             Toggle("Gravity", isOn: $gravityEnabled)
+                            Toggle("Level progression", isOn: $levelProgressionEnabled)
+                            Toggle("Move reset", isOn: moveResetSelection)
+                            Toggle("Step reset", isOn: stepResetSelection)
                             Toggle("Infinite lock delay", isOn: $infiniteLockDelay)
                             Toggle("Infinite hold", isOn: $infiniteHold)
                             Toggle("Export active piece", isOn: $exportIncludeActive)
@@ -6631,18 +7576,88 @@ struct PlaySettingsView: View {
         }
     }
 
-    private func playTuningRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
+    private var gravityLevelSelection: Binding<Int> {
+        Binding(
+            get: { levelProgressionEnabled ? model.playCurrentLevel : tuningGravityLevel },
+            set: { level in
+                tuningGravityLevel = level
+                model.playCurrentLevel = level
+                model.playLevelProgress = 0
+                model.playLevelSelectionRequest = level
+                if level >= 20 {
+                    let delay = sft_game_lock_delay_for_level(Int32(level))
+                    tuningLockDelayMs = Double(delay)
+                    model.playCurrentLockDelay = Int(delay)
+                }
+            }
+        )
+    }
+
+    private var levelProgressionStatus: String {
+        guard levelProgressionEnabled else {
+            return "Level \(tuningGravityLevel) · progression off"
+        }
+        if model.playCurrentLevel >= 30 {
+            return "Level 30 · maximum"
+        }
+        return "Level \(model.playCurrentLevel) · \(model.playLevelProgress)/10 lines"
+    }
+
+    private var lockDelaySelection: Binding<Double> {
+        Binding(
+            get: { Double(model.playCurrentLockDelay) },
+            set: { delay in
+                tuningLockDelayMs = delay
+                model.playCurrentLockDelay = Int(delay.rounded())
+                if model.playCurrentLevel > 20
+                    && Int32(delay.rounded()) != sft_game_lock_delay_for_level(Int32(model.playCurrentLevel)) {
+                    tuningGravityLevel = 20
+                    model.playCurrentLevel = 20
+                    model.playLevelProgress = 0
+                    model.playLevelSelectionRequest = 20
+                }
+            }
+        )
+    }
+
+    private var moveResetSelection: Binding<Bool> {
+        Binding(
+            get: { moveResetEnabled },
+            set: { enabled in
+                moveResetEnabled = enabled
+                if enabled {
+                    stepResetEnabled = false
+                }
+            }
+        )
+    }
+
+    private var stepResetSelection: Binding<Bool> {
+        Binding(
+            get: { stepResetEnabled },
+            set: { enabled in
+                stepResetEnabled = enabled
+                if enabled {
+                    moveResetEnabled = false
+                }
+            }
+        )
+    }
+
+    private func playTuningRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String, enabled: Bool = true) -> some View {
         GridRow {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
                 Slider(value: value, in: range)
-                Text("\(Int(value.wrappedValue.rounded())) \(suffix)")
+                Text(suffix.isEmpty ? "\(Int(value.wrappedValue.rounded()))" : "\(Int(value.wrappedValue.rounded())) \(suffix)")
                     .font(.caption.monospacedDigit())
                     .frame(width: 58, alignment: .trailing)
             }
         }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.55)
     }
 }
 

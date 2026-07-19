@@ -14,5 +14,8 @@ native-macos/output/
 solution-finder-1.43/output/
 solution-finder/output/
 
+# Separately versioned sfinder-enhanced-cli source checkout
+/solution-finder/
+
 # Local editor/runtime noise
 *.log

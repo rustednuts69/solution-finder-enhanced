@@ -20,8 +20,10 @@ cp "$SCRIPT_DIR/.build/release/SolutionFinderEnhanced" "$MACOS_DIR/SolutionFinde
 cp "$ROOT_DIR/fumen_en.html" "$RESOURCES_DIR/fumen_en.html"
 cp "$ROOT_DIR/fumen.html" "$RESOURCES_DIR/fumen.html"
 cp "$ROOT_DIR/shared/openers.json" "$RESOURCES_DIR/openers.json"
+cp "$SCRIPT_DIR/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 cp -R "$ROOT_DIR/native-macos" "$RESOURCES_DIR/native-macos"
 cp -R "$ROOT_DIR/solution-finder-1.43" "$RESOURCES_DIR/solution-finder-1.43"
+find "$APP_DIR" -name .DS_Store -delete
 rm -rf "$RESOURCES_DIR/native-macos/output" "$RESOURCES_DIR/solution-finder-1.43/output"
 mkdir -p "$RESOURCES_DIR/native-macos/output" "$RESOURCES_DIR/solution-finder-1.43/output"
 chmod +x "$RESOURCES_DIR/native-macos/bin/sfinder"
@@ -39,6 +41,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>local.solution-finder-enhanced</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleName</key>
   <string>Solution Finder Enhanced</string>
   <key>CFBundlePackageType</key>

@@ -14,6 +14,7 @@ let package = Package(
         .target(
             name: "GameCore",
             path: "portable",
+            exclude: ["tests"],
             publicHeadersPath: "include"
         ),
         .executableTarget(

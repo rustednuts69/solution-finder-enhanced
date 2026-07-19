@@ -1,12 +1,16 @@
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCursor>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -15,29 +19,42 @@
 #include <QGridLayout>
 #include <QGuiApplication>
 #include <QGroupBox>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QRubberBand>
+#include <QSaveFile>
 #include <QScreen>
+#include <QScrollArea>
+#include <QSet>
+#include <QSettings>
+#include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStackedWidget>
+#include <QSplitter>
 #include <QSysInfo>
 #include <QTabBar>
 #include <QTabWidget>
@@ -46,6 +63,7 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextStream>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QStyleFactory>
@@ -54,9 +72,13 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <iterator>
+#include <limits>
 #include <optional>
 #include <random>
 #include <vector>
+
+#include "game_core.h"
 
 namespace {
 
@@ -72,6 +94,7 @@ struct Opener {
     QString openerName;
     QString variationName;
     QString code;
+    bool earlyVariantDetection = false;
 };
 
 struct OpeningDetectionResult {
@@ -108,11 +131,149 @@ struct DecodedFumen {
     int pageCount = 0;
 };
 
-struct PlayPiece {
-    int type = 0;
-    int rotation = 0;
-    int x = 4;
-    int y = 1;
+struct PCScoutTarget {
+    int pieces = 0;
+    int clearLines = 0;
+};
+
+struct SpinScoutChoice {
+    QString code;
+    int holes = 0;
+    int pieces = 0;
+    int pillarPenalty = 0;
+    int bumpiness = 0;
+    qint64 score = 0;
+};
+
+struct HeldPlayInput {
+    int command = 0;
+    int pressOrder = 0;
+    qint64 pressedAtMs = 0;
+    qint64 nextRepeatAtMs = 0;
+    bool repeated = false;
+};
+
+struct PlayUndoSnapshot {
+    SFTGameState game{};
+    int openingCycleStartPieces = 0;
+    bool openerDetectionDone = false;
+    bool variantDetectionDone = false;
+    bool earlyVariantDetection = false;
+    QString detectedOpenerName;
+    std::optional<bool> detectedOpenerMirrored;
+    QString detectionLabel;
+};
+
+class DiagnosticLog {
+public:
+    static DiagnosticLog &instance() {
+        static DiagnosticLog log;
+        return log;
+    }
+
+    void append(const QString &message) {
+        const QString trimmed = message.trimmed();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+        const QString line = QString("[%1] %2")
+                                 .arg(QDateTime::currentDateTime().toString("HH:mm:ss.zzz"), trimmed);
+        text_ += text_.isEmpty() ? line : "\n" + line;
+        refreshViews();
+    }
+
+    void appendBlock(const QString &title, const QStringList &lines) {
+        QStringList block{title};
+        for (const QString &line : lines) {
+            block << "  " + line;
+        }
+        append(block.join('\n'));
+    }
+
+    void attach(QPlainTextEdit *view) {
+        if (!view) {
+            return;
+        }
+        views_.erase(
+            std::remove_if(views_.begin(), views_.end(), [](const QPointer<QPlainTextEdit> &item) {
+                return item.isNull();
+            }),
+            views_.end());
+        const auto existing = std::find_if(
+            views_.begin(), views_.end(), [view](const QPointer<QPlainTextEdit> &item) {
+                return item.data() == view;
+            });
+        if (existing == views_.end()) {
+            views_.push_back(view);
+        }
+        view->setPlainText(text_);
+        view->moveCursor(QTextCursor::End);
+    }
+
+    void clear() {
+        text_.clear();
+        refreshViews();
+    }
+
+    const QString &text() const {
+        return text_;
+    }
+
+private:
+    void refreshViews() {
+        views_.erase(
+            std::remove_if(views_.begin(), views_.end(), [](const QPointer<QPlainTextEdit> &item) {
+                return item.isNull();
+            }),
+            views_.end());
+        for (const QPointer<QPlainTextEdit> &view : views_) {
+            view->setPlainText(text_);
+            view->moveCursor(QTextCursor::End);
+        }
+    }
+
+    QString text_;
+    std::vector<QPointer<QPlainTextEdit>> views_;
+};
+
+class OutputLogDialog : public QDialog {
+public:
+    explicit OutputLogDialog(QWidget *parent = nullptr)
+        : QDialog(parent) {
+        setWindowTitle("Output Log");
+        setMinimumSize(720, 420);
+        resize(860, 540);
+
+        auto *layout = new QVBoxLayout(this);
+        auto *toolbar = new QHBoxLayout();
+        auto *title = new QLabel("Application diagnostics", this);
+        title->setObjectName("paneTitle");
+        auto *copyButton = new QPushButton("Copy", this);
+        auto *clearButton = new QPushButton("Clear", this);
+        toolbar->addWidget(title);
+        toolbar->addStretch(1);
+        toolbar->addWidget(copyButton);
+        toolbar->addWidget(clearButton);
+        layout->addLayout(toolbar);
+
+        output_ = new QPlainTextEdit(this);
+        output_->setReadOnly(true);
+        output_->setPlaceholderText("Screenshot, opener detection, fumen, and process diagnostics will appear here.");
+        output_->setStyleSheet(
+            "font-family: 'Menlo', 'SF Mono', 'DejaVu Sans Mono', monospace; font-size: 13px;");
+        layout->addWidget(output_, 1);
+        DiagnosticLog::instance().attach(output_);
+
+        connect(copyButton, &QPushButton::clicked, this, []() {
+            QApplication::clipboard()->setText(DiagnosticLog::instance().text());
+        });
+        connect(clearButton, &QPushButton::clicked, this, []() {
+            DiagnosticLog::instance().clear();
+        });
+    }
+
+private:
+    QPlainTextEdit *output_ = nullptr;
 };
 
 QColor cellColor(int value) {
@@ -232,6 +393,18 @@ QString appDataDir() {
     }
     QDir().mkpath(base);
     return base;
+}
+
+QString editableOpenerDatabasePath() {
+    return QDir(appDataDir()).filePath("openers.json");
+}
+
+QString openerDatabasePath(const QString &repoRoot) {
+    const QString editable = editableOpenerDatabasePath();
+    if (QFileInfo::exists(editable)) {
+        return editable;
+    }
+    return QDir(repoRoot).filePath("shared/openers.json");
 }
 
 double hueDistance(double lhs, double rhs) {
@@ -368,6 +541,7 @@ std::optional<QImage> runScreenshotCommand(const QString &program,
         if (errorMessage) {
             *errorMessage = "could not start";
         }
+        DiagnosticLog::instance().append("Screenshot tool could not start: " + program);
         return std::nullopt;
     }
     while (!process.waitForFinished(100)) {
@@ -381,6 +555,10 @@ std::optional<QImage> runScreenshotCommand(const QString &program,
                                 .arg(process.exitCode())
                                 .arg(stderrText.isEmpty() ? "" : ": " + stderrText);
         }
+        DiagnosticLog::instance().append(
+            QString("Screenshot tool returned no image: %1 (exit %2)")
+                .arg(program)
+                .arg(process.exitCode()));
         QFile::remove(path);
         return std::nullopt;
     }
@@ -390,8 +568,14 @@ std::optional<QImage> runScreenshotCommand(const QString &program,
         if (errorMessage) {
             *errorMessage = "screenshot file was not a readable image";
         }
+        DiagnosticLog::instance().append("Screenshot tool produced an unreadable image: " + program);
         return std::nullopt;
     }
+    DiagnosticLog::instance().append(
+        QString("Screenshot captured with %1 (%2x%3)")
+            .arg(program)
+            .arg(image.width())
+            .arg(image.height()));
     return image;
 }
 
@@ -514,6 +698,7 @@ std::optional<QImage> captureWindowsRegion(QWidget *parent) {
             window->show();
         }
         QMessageBox::warning(parent, "Screenshot", "Windows did not report an available display.");
+        DiagnosticLog::instance().append("Windows screenshot failed: no display was available.");
         return std::nullopt;
     }
 
@@ -523,6 +708,7 @@ std::optional<QImage> captureWindowsRegion(QWidget *parent) {
             window->show();
         }
         QMessageBox::warning(parent, "Screenshot", "Windows could not capture the selected display.");
+        DiagnosticLog::instance().append("Windows screenshot failed while reading the display.");
         return std::nullopt;
     }
 
@@ -531,6 +717,14 @@ std::optional<QImage> captureWindowsRegion(QWidget *parent) {
     std::optional<QImage> image;
     if (result == QDialog::Accepted) {
         image = selector.selectedImage();
+        if (image.has_value()) {
+            DiagnosticLog::instance().append(
+                QString("Windows screenshot region captured (%1x%2)")
+                    .arg(image->width())
+                    .arg(image->height()));
+        }
+    } else {
+        DiagnosticLog::instance().append("Windows screenshot selection was canceled.");
     }
     if (wasVisible) {
         window->show();
@@ -546,9 +740,10 @@ std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
 #else
     QTemporaryFile temp(QDir::tempPath() + "/solution-finder-screenshot-XXXXXX.png");
     temp.setAutoRemove(false);
-    if (!temp.open()) {
-        QMessageBox::warning(parent, "Screenshot", "Could not create a temporary screenshot file.");
-        return std::nullopt;
+        if (!temp.open()) {
+            QMessageBox::warning(parent, "Screenshot", "Could not create a temporary screenshot file.");
+            DiagnosticLog::instance().append("Screenshot failed: could not create a temporary file.");
+            return std::nullopt;
     }
     const QString path = temp.fileName();
     temp.close();
@@ -634,6 +829,7 @@ std::optional<QImage> captureBoardScreenshot(QWidget *parent = nullptr) {
                          "Screenshot",
                          detail + "\n\n"
                          "On Linux, install one of: gnome-screenshot, grim + slurp, spectacle, flameshot, maim, or scrot.");
+    DiagnosticLog::instance().append(detail);
     return std::nullopt;
 #endif
 }
@@ -799,63 +995,18 @@ std::optional<DecodedFumen> decodeFumenV115(QString code) {
 }
 
 class BoardWidget : public QWidget {
-    class BoardCellWidget : public QFrame {
-    public:
-        explicit BoardCellWidget(QWidget *parent = nullptr)
-            : QFrame(parent) {
-            setAttribute(Qt::WA_OpaquePaintEvent, true);
-            setAttribute(Qt::WA_TransparentForMouseEvents, true);
-        }
-
-        void setValue(int value) {
-            if (value_ == value) {
-                return;
-            }
-            value_ = value;
-            update();
-        }
-
-    protected:
-        void paintEvent(QPaintEvent *) override {
-            QPainter painter(this);
-            painter.setRenderHint(QPainter::Antialiasing, false);
-            const QRect r = rect();
-            if (value_ == 0) {
-                painter.fillRect(r, QColor("#080808"));
-                painter.setPen(QPen(QColor("#2a2a2a"), 1));
-                painter.drawRect(r.adjusted(0, 0, -1, -1));
-                return;
-            }
-
-            const QColor fill = cellColor(value_);
-            painter.fillRect(r, QColor("#050505"));
-            painter.fillRect(r.adjusted(1, 1, -1, -1), fill);
-            painter.setPen(QPen(fill.lighter(135), 2));
-            painter.drawLine(r.left() + 2, r.top() + 2, r.right() - 2, r.top() + 2);
-            painter.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
-            painter.setPen(QPen(QColor("#050505"), 1));
-            painter.drawRect(r.adjusted(0, 0, -1, -1));
-        }
-
-    private:
-        int value_ = 0;
-    };
-
 public:
     explicit BoardWidget(QWidget *parent = nullptr)
         : QWidget(parent) {
         cells_.fill(0);
+        ghostCells_.fill(0);
+        solutionCells_.fill(0);
+        setAttribute(Qt::WA_OpaquePaintEvent, true);
         setMinimumSize(260, 520);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setFocusPolicy(Qt::StrongFocus);
         setMouseTracking(true);
         setObjectName("boardWidget");
-        setStyleSheet("QWidget#boardWidget { background-color: #000000; border: 3px solid #050505; border-radius: 7px; }");
-        for (int i = 0; i < kColumns * kRows; ++i) {
-            auto *cell = new BoardCellWidget(this);
-            cellWidgets_[i] = cell;
-        }
-        refreshAllCells();
     }
 
     QSize sizeHint() const override {
@@ -868,15 +1019,52 @@ public:
 
     void clearBoard() {
         cells_.fill(0);
-        refreshAllCells();
+        ghostCells_.fill(0);
+        solutionCells_.fill(0);
+        update();
         if (onChanged) {
             onChanged();
         }
     }
 
     void setCells(const std::array<int, kColumns * kRows> &cells) {
+        if (cells_ == cells) {
+            return;
+        }
         cells_ = cells;
-        refreshAllCells();
+        update();
+    }
+
+    void setGhostCells(const std::array<int, kColumns * kRows> &cells) {
+        if (ghostCells_ == cells) {
+            return;
+        }
+        ghostCells_ = cells;
+        update();
+    }
+
+    void setSolutionCells(const std::array<int, kColumns * kRows> &cells) {
+        if (solutionCells_ == cells) {
+            return;
+        }
+        solutionCells_ = cells;
+        update();
+    }
+
+    void clearSolutionCells() {
+        std::array<int, kColumns * kRows> blank{};
+        blank.fill(0);
+        setSolutionCells(blank);
+    }
+
+    void setRenderCells(const std::array<int, kColumns * kRows> &cells,
+                        const std::array<int, kColumns * kRows> &ghostCells) {
+        if (cells_ == cells && ghostCells_ == ghostCells) {
+            return;
+        }
+        cells_ = cells;
+        ghostCells_ = ghostCells;
+        update();
     }
 
     void setPaintValue(int value) {
@@ -896,7 +1084,7 @@ public:
             }
         }
         cells_ = next;
-        refreshAllCells();
+        update();
         if (onChanged) {
             onChanged();
         }
@@ -904,14 +1092,86 @@ public:
 
     std::function<void()> onChanged;
     std::function<bool(int)> onCellPressed;
-    std::function<void(int)> onKeyPressed;
+    std::function<void(int, Qt::KeyboardModifiers)> onKeyPressed;
+    std::function<void(int, Qt::KeyboardModifiers)> onKeyReleased;
 
 protected:
-    void resizeEvent(QResizeEvent *) override {
-        layoutCells();
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.fillRect(rect(), QColor("#303030"));
+
+        const QRect board = boardRect();
+        const int cell = qMax(1, board.width() / kColumns);
+        painter.fillRect(board, QColor("#050505"));
+        for (int row = 0; row < kRows; ++row) {
+            for (int col = 0; col < kColumns; ++col) {
+                const int index = row * kColumns + col;
+                const QRect r(
+                    board.left() + col * cell,
+                    board.top() + row * cell,
+                    cell,
+                    cell
+                );
+                const int value = cells_[index];
+                const int ghostValue = ghostCells_[index];
+                const int solutionValue = solutionCells_[index];
+                if (value == 0) {
+                    painter.fillRect(r, QColor("#080808"));
+                    bool drewOverlay = false;
+                    if (solutionValue > 0) {
+                        const QColor base = cellColor(solutionValue);
+                        QColor fill = base;
+                        fill.setAlpha(82);
+                        painter.fillRect(r.adjusted(1, 1, -1, -1), fill);
+
+                        QColor highlight = base.lighter(135);
+                        highlight.setAlpha(145);
+                        painter.setPen(QPen(highlight, 2));
+                        painter.drawLine(r.left() + 2, r.top() + 2, r.right() - 2, r.top() + 2);
+                        painter.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
+
+                        QColor border("#050505");
+                        border.setAlpha(155);
+                        painter.setPen(QPen(border, 1));
+                        painter.drawRect(r.adjusted(0, 0, -1, -1));
+                        drewOverlay = true;
+                    }
+                    if (ghostValue > 0) {
+                        QColor ghost = cellColor(ghostValue);
+                        ghost.setAlpha(78);
+                        painter.fillRect(r.adjusted(3, 3, -3, -3), ghost);
+                        QColor ghostOutline = cellColor(ghostValue).lighter(135);
+                        ghostOutline.setAlpha(235);
+                        painter.setPen(QPen(ghostOutline, 2));
+                        painter.drawRect(r.adjusted(2, 2, -3, -3));
+                        drewOverlay = true;
+                    }
+                    if (!drewOverlay) {
+                        painter.setPen(QPen(QColor("#2a2a2a"), 1));
+                        painter.drawRect(r.adjusted(0, 0, -1, -1));
+                    }
+                    continue;
+                }
+
+                const QColor fill = cellColor(value);
+                painter.fillRect(r.adjusted(1, 1, -1, -1), fill);
+                painter.setPen(QPen(fill.lighter(135), 2));
+                painter.drawLine(r.left() + 2, r.top() + 2, r.right() - 2, r.top() + 2);
+                painter.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
+                painter.setPen(QPen(QColor("#050505"), 1));
+                painter.drawRect(r.adjusted(0, 0, -1, -1));
+            }
+        }
+
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor("#050505"), 3));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(board.adjusted(1, 1, -1, -1), 7, 7);
     }
 
     void mousePressEvent(QMouseEvent *event) override {
+        setFocus(Qt::MouseFocusReason);
         if (event->button() != Qt::LeftButton) {
             return;
         }
@@ -934,11 +1194,24 @@ protected:
 
     void keyPressEvent(QKeyEvent *event) override {
         if (onKeyPressed) {
-            onKeyPressed(event->key());
+            if (!event->isAutoRepeat()) {
+                onKeyPressed(event->key(), event->modifiers());
+            }
             event->accept();
             return;
         }
         QWidget::keyPressEvent(event);
+    }
+
+    void keyReleaseEvent(QKeyEvent *event) override {
+        if (onKeyReleased) {
+            if (!event->isAutoRepeat()) {
+                onKeyReleased(event->key(), event->modifiers());
+            }
+            event->accept();
+            return;
+        }
+        QWidget::keyReleaseEvent(event);
     }
 
 private:
@@ -954,20 +1227,6 @@ private:
         boardWidth = qMax(10, (boardWidth / kColumns) * kColumns);
         boardHeight = boardWidth * 2;
         return QRect((width() - boardWidth) / 2, (height() - boardHeight) / 2, boardWidth, boardHeight);
-    }
-
-    void layoutCells() {
-        const QRect board = boardRect();
-        const int cell = qMax(1, board.width() / kColumns);
-        for (int row = 0; row < kRows; ++row) {
-            for (int col = 0; col < kColumns; ++col) {
-                const int index = row * kColumns + col;
-                cellWidgets_[index]->setGeometry(board.left() + col * cell,
-                                                 board.top() + row * cell,
-                                                 cell,
-                                                 cell);
-            }
-        }
     }
 
     void paintCellAt(const QPoint &point) {
@@ -991,7 +1250,7 @@ private:
             return;
         }
         cells_[index] = nextValue;
-        refreshCell(index);
+        update();
         if (onChanged) {
             onChanged();
         }
@@ -1008,23 +1267,873 @@ private:
         return cells_[row * kColumns + col];
     }
 
-    void refreshAllCells() {
-        for (int i = 0; i < kColumns * kRows; ++i) {
-            refreshCell(i);
-        }
-        layoutCells();
-    }
-
-    void refreshCell(int index) {
-        cellWidgets_[index]->setValue(cells_[index]);
-    }
-
     std::array<int, kColumns * kRows> cells_{};
-    std::array<BoardCellWidget *, kColumns * kRows> cellWidgets_{};
+    std::array<int, kColumns * kRows> ghostCells_{};
+    std::array<int, kColumns * kRows> solutionCells_{};
     int paintValue_ = 8;
     int lastPainted_ = -1;
     bool painting_ = false;
     bool eraseStroke_ = false;
+};
+
+class PiecePreviewWidget : public QWidget {
+public:
+    explicit PiecePreviewWidget(QWidget *parent = nullptr)
+        : QWidget(parent) {
+        setMinimumSize(56, 56);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    }
+
+    void setPiece(int piece) {
+        if (piece_ == piece) {
+            return;
+        }
+        piece_ = piece;
+        update();
+    }
+
+    void setCellSize(int size) {
+        cellSize_ = qBound(8, size, 20);
+        const int side = cellSize_ * 4 + 6;
+        setFixedSize(side, side);
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor("#303030"));
+        if (piece_ <= 0 || piece_ >= 8) {
+            return;
+        }
+        const int spacing = qMax(1, cellSize_ / 8);
+        const int gridSize = cellSize_ * 4 + spacing * 3;
+        const int left = (width() - gridSize) / 2;
+        const int top = (height() - gridSize) / 2;
+        for (int row = 0; row < 4; ++row) {
+            const int gameY = 3 - row;
+            for (int column = 0; column < 4; ++column) {
+                if (!sft_game_piece_cell(piece_, 0, column, gameY)) {
+                    continue;
+                }
+                const int x = left + column * (cellSize_ + spacing);
+                const int y = top + row * (cellSize_ + spacing);
+                painter.fillRect(QRect(x, y, cellSize_, cellSize_), cellColor(piece_));
+            }
+        }
+    }
+
+private:
+    int piece_ = 0;
+    int cellSize_ = 14;
+};
+
+QString encodeFumenFields(const std::vector<std::array<int, kFumenBlocks>> &sourcePages) {
+    QString output = "v115@";
+    const QString table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::array<int, kFumenBlocks> previous{};
+    previous.fill(0);
+    std::vector<std::array<int, kFumenBlocks>> pages = sourcePages;
+    if (pages.empty()) {
+        std::array<int, kFumenBlocks> blank{};
+        blank.fill(0);
+        pages.push_back(blank);
+    }
+
+    for (int pageIndex = 0; pageIndex < static_cast<int>(pages.size()); ++pageIndex) {
+        std::array<int, kFumenBlocks> page = pages[pageIndex];
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            page[index] = 0;
+        }
+        int index = 0;
+        while (index < kFumenBlocks) {
+            const int diff = qBound(-8, page[index] - previous[index], 8);
+            int run = 0;
+            while (index + run + 1 < kFumenBlocks &&
+                   run + 1 < kFumenBlocks &&
+                   qBound(-8, page[index + run + 1] - previous[index + run + 1], 8) == diff) {
+                ++run;
+            }
+            const int value = (diff + 8) * kFumenBlocks + run;
+            output += table[value % 64];
+            output += table[(value / 64) % 64];
+            index += run + 1;
+        }
+
+        previous = page;
+        const int action = 0
+                           + 0 * 8
+                           + 0 * 8 * 4
+                           + 0 * 8 * 4 * kFumenBlocks
+                           + 0 * 8 * 4 * kFumenBlocks * 2
+                           + (pageIndex == 0 ? 1 : 0) * 8 * 4 * kFumenBlocks * 4
+                           + 0 * 8 * 4 * kFumenBlocks * 8
+                           + 1 * 8 * 4 * kFumenBlocks * 16;
+        output += table[action % 64];
+        output += table[(action / 64) % 64];
+        output += table[(action / 4096) % 64];
+    }
+    return output;
+}
+
+std::array<int, kColumns * kRows> visibleFumenCells(const std::array<int, kFumenBlocks> &page) {
+    std::array<int, kColumns * kRows> visible{};
+    visible.fill(0);
+    for (int row = 0; row < kRows; ++row) {
+        for (int column = 0; column < kColumns; ++column) {
+            visible[row * kColumns + column] =
+                qBound(0, page[(kVisibleTopRow + row) * kColumns + column], 8);
+        }
+    }
+    return visible;
+}
+
+QString openerSlug(const QString &name) {
+    QString slug = name.toLower();
+    slug.replace(QRegularExpression("[^a-z0-9]+"), "-");
+    slug.remove(QRegularExpression("^-+|-+$"));
+    return slug.isEmpty() ? "opener" : slug;
+}
+
+struct OpenerVariationDraft {
+    QString name;
+    QString code;
+    std::vector<std::array<int, kFumenBlocks>> pages;
+    int selectedPage = 0;
+};
+
+struct OpenerGroupDraft {
+    QString name;
+    bool earlyVariantDetection = false;
+    OpenerVariationDraft base{"Base", "", {}, 0};
+    std::vector<OpenerVariationDraft> variations;
+};
+
+class OpenerImporterDialog : public QDialog {
+public:
+    OpenerImporterDialog(QString repoRoot,
+                         std::function<void()> databaseChanged,
+                         QWidget *parent = nullptr)
+        : QDialog(parent),
+          repoRoot_(std::move(repoRoot)),
+          databaseChanged_(std::move(databaseChanged)) {
+        setWindowTitle("Opener Importer");
+        setMinimumSize(820, 640);
+        resize(1120, 760);
+        buildUi();
+        loadBook();
+    }
+
+private:
+    void buildUi() {
+        auto *rootLayout = new QVBoxLayout(this);
+        rootLayout->setContentsMargins(12, 12, 12, 12);
+        rootLayout->setSpacing(10);
+
+        auto *toolbar = new QHBoxLayout();
+        auto *title = new QLabel("Opener Importer", this);
+        title->setObjectName("paneTitle");
+        auto *loadButton = new QPushButton("Load Book", this);
+        auto *newButton = new QPushButton("New Group", this);
+        auto *saveButton = new QPushButton("Save Book", this);
+        saveButton->setObjectName("primaryButton");
+        toolbar->addWidget(title);
+        toolbar->addStretch(1);
+        toolbar->addWidget(loadButton);
+        toolbar->addWidget(newButton);
+        toolbar->addWidget(saveButton);
+        rootLayout->addLayout(toolbar);
+
+        auto *splitter = new QSplitter(Qt::Horizontal, this);
+        splitter->setChildrenCollapsible(false);
+        rootLayout->addWidget(splitter, 1);
+
+        auto *editorScroll = new QScrollArea(splitter);
+        editorScroll->setWidgetResizable(true);
+        editorScroll->setFrameShape(QFrame::NoFrame);
+        auto *editor = new QWidget(editorScroll);
+        auto *editorLayout = new QVBoxLayout(editor);
+        editorLayout->setContentsMargins(4, 4, 8, 4);
+        editorLayout->setSpacing(10);
+
+        auto *groupBox = new QGroupBox("Opener Group", editor);
+        auto *groupLayout = new QFormLayout(groupBox);
+        openerNameEdit_ = new QLineEdit(groupBox);
+        openerNameEdit_->setPlaceholderText("Example: TKI 3");
+        earlyVariantCheck_ = new QCheckBox("Detect variant after 6 pieces", groupBox);
+        auto *updateButton = new QPushButton("Add / Update Group", groupBox);
+        groupLayout->addRow("Name", openerNameEdit_);
+        groupLayout->addRow("", earlyVariantCheck_);
+        groupLayout->addRow("", updateButton);
+        editorLayout->addWidget(groupBox);
+
+        auto *baseBox = new QGroupBox("Base Fumen", editor);
+        auto *baseLayout = new QVBoxLayout(baseBox);
+        baseCodeEdit_ = new QPlainTextEdit(baseBox);
+        baseCodeEdit_->setPlaceholderText("v115@...");
+        baseCodeEdit_->setMaximumHeight(76);
+        baseLayout->addWidget(baseCodeEdit_);
+        auto *baseActions = new QHBoxLayout();
+        auto *baseDecodeButton = new QPushButton("Decode", baseBox);
+        auto *baseShotButton = new QPushButton("Screenshot", baseBox);
+        basePageSpin_ = new QSpinBox(baseBox);
+        basePageSpin_->setPrefix("Page ");
+        basePageSpin_->setRange(1, 1);
+        baseActions->addWidget(baseDecodeButton);
+        baseActions->addWidget(baseShotButton);
+        baseActions->addStretch(1);
+        baseActions->addWidget(basePageSpin_);
+        baseLayout->addLayout(baseActions);
+        editorLayout->addWidget(baseBox);
+
+        auto *variationBox = new QGroupBox("Variations", editor);
+        auto *variationLayout = new QVBoxLayout(variationBox);
+        auto *variationSelectorRow = new QHBoxLayout();
+        variationBox_ = new QComboBox(variationBox);
+        auto *addVariationButton = new QPushButton("Add", variationBox);
+        removeVariationButton_ = new QPushButton("Remove", variationBox);
+        variationSelectorRow->addWidget(variationBox_, 1);
+        variationSelectorRow->addWidget(addVariationButton);
+        variationSelectorRow->addWidget(removeVariationButton_);
+        variationLayout->addLayout(variationSelectorRow);
+        variationNameEdit_ = new QLineEdit(variationBox);
+        variationNameEdit_->setPlaceholderText("Variation name");
+        variationLayout->addWidget(variationNameEdit_);
+        variationCodeEdit_ = new QPlainTextEdit(variationBox);
+        variationCodeEdit_->setPlaceholderText("v115@...");
+        variationCodeEdit_->setMaximumHeight(76);
+        variationLayout->addWidget(variationCodeEdit_);
+        auto *variationActions = new QHBoxLayout();
+        auto *variationDecodeButton = new QPushButton("Decode", variationBox);
+        auto *variationShotButton = new QPushButton("Screenshot", variationBox);
+        variationPageSpin_ = new QSpinBox(variationBox);
+        variationPageSpin_->setPrefix("Page ");
+        variationPageSpin_->setRange(1, 1);
+        variationActions->addWidget(variationDecodeButton);
+        variationActions->addWidget(variationShotButton);
+        variationActions->addStretch(1);
+        variationActions->addWidget(variationPageSpin_);
+        variationLayout->addLayout(variationActions);
+        editorLayout->addWidget(variationBox);
+        editorLayout->addStretch(1);
+        editorScroll->setWidget(editor);
+
+        auto *info = new QWidget(splitter);
+        auto *infoLayout = new QVBoxLayout(info);
+        infoLayout->setContentsMargins(8, 4, 4, 4);
+        infoLayout->setSpacing(10);
+
+        auto *previewBox = new QGroupBox("Preview", info);
+        auto *previewLayout = new QVBoxLayout(previewBox);
+        previewSourceBox_ = new QComboBox(previewBox);
+        previewLayout->addWidget(previewSourceBox_);
+        previewBoard_ = new BoardWidget(previewBox);
+        previewBoard_->setMinimumSize(220, 440);
+        previewBoard_->setMaximumSize(270, 540);
+        previewBoard_->onCellPressed = [](int) { return true; };
+        previewLayout->addWidget(previewBoard_, 1, Qt::AlignHCenter);
+        infoLayout->addWidget(previewBox, 1);
+
+        auto *bookBox = new QGroupBox("Opener Book", info);
+        auto *bookLayout = new QVBoxLayout(bookBox);
+        bookList_ = new QListWidget(bookBox);
+        bookLayout->addWidget(bookList_, 1);
+        auto *bookActions = new QHBoxLayout();
+        auto *editButton = new QPushButton("Edit", bookBox);
+        auto *removeButton = new QPushButton("Remove", bookBox);
+        bookActions->addWidget(editButton);
+        bookActions->addWidget(removeButton);
+        bookActions->addStretch(1);
+        bookLayout->addLayout(bookActions);
+        infoLayout->addWidget(bookBox, 1);
+
+        statusLabel_ = new QLabel("Ready", info);
+        statusLabel_->setWordWrap(true);
+        statusLabel_->setObjectName("paneSubtitle");
+        infoLayout->addWidget(statusLabel_);
+
+        splitter->addWidget(editorScroll);
+        splitter->addWidget(info);
+        splitter->setSizes({650, 430});
+
+        connect(loadButton, &QPushButton::clicked, this, [this]() { loadBook(); });
+        connect(newButton, &QPushButton::clicked, this, [this]() { newGroup(); });
+        connect(saveButton, &QPushButton::clicked, this, [this]() { saveBook(); });
+        connect(updateButton, &QPushButton::clicked, this, [this]() { addOrUpdateCurrentGroup(); });
+        connect(baseDecodeButton, &QPushButton::clicked, this, [this]() { decodeBase(); });
+        connect(baseShotButton, &QPushButton::clicked, this, [this]() { screenshotBase(); });
+        connect(variationDecodeButton, &QPushButton::clicked, this, [this]() { decodeVariation(); });
+        connect(variationShotButton, &QPushButton::clicked, this, [this]() { screenshotVariation(); });
+        connect(addVariationButton, &QPushButton::clicked, this, [this]() { addVariation(); });
+        connect(removeVariationButton_, &QPushButton::clicked, this, [this]() { removeVariation(); });
+        connect(variationBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+            selectVariation(index);
+        });
+        connect(basePageSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int page) {
+            current_.base.selectedPage = page - 1;
+            refreshPreview();
+        });
+        connect(variationPageSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int page) {
+            if (selectedVariation_ >= 0 && selectedVariation_ < static_cast<int>(current_.variations.size())) {
+                current_.variations[selectedVariation_].selectedPage = page - 1;
+                refreshPreview();
+            }
+        });
+        connect(previewSourceBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            refreshPreview();
+        });
+        connect(editButton, &QPushButton::clicked, this, [this]() { editSelectedBookGroup(); });
+        connect(removeButton, &QPushButton::clicked, this, [this]() { removeSelectedBookGroup(); });
+        connect(bookList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *) {
+            editSelectedBookGroup();
+        });
+    }
+
+    bool parseBook(const QString &path, std::vector<OpenerGroupDraft> *groups, QString *error) const {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            *error = "Could not open " + path;
+            return false;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            *error = "Invalid opener JSON: " + parseError.errorString();
+            return false;
+        }
+
+        groups->clear();
+        QHash<QString, int> indexes;
+        const QJsonArray records = document.object().value("openers").toArray();
+        for (const QJsonValue &value : records) {
+            const QJsonObject object = value.toObject();
+            const QString openerName =
+                object.value("openerName").toString(object.value("name").toString()).trimmed();
+            const QString id = object.value("id").toString();
+            if (openerName.isEmpty() || id == "empty" || openerName == "Empty board") {
+                continue;
+            }
+            const QString key = openerName.toLower();
+            if (!indexes.contains(key)) {
+                indexes.insert(key, static_cast<int>(groups->size()));
+                OpenerGroupDraft group;
+                group.name = openerName;
+                group.earlyVariantDetection = object.value("earlyVariantDetection").toBool(false);
+                groups->push_back(group);
+            }
+            OpenerGroupDraft &group = (*groups)[indexes.value(key)];
+            group.earlyVariantDetection =
+                group.earlyVariantDetection || object.value("earlyVariantDetection").toBool(false);
+            OpenerVariationDraft variation;
+            variation.name = object.value("variationName").toString("Base");
+            variation.code = object.value("code").toString().trimmed();
+            if (variation.code.startsWith("v115@")) {
+                if (const auto decoded = decodeFumenV115(variation.code); decoded.has_value()) {
+                    variation.pages = decoded->pages;
+                }
+            }
+            if (variation.name.compare("Base", Qt::CaseInsensitive) == 0) {
+                variation.name = "Base";
+                group.base = variation;
+            } else {
+                group.variations.push_back(variation);
+            }
+        }
+        std::sort(groups->begin(), groups->end(), [](const OpenerGroupDraft &lhs, const OpenerGroupDraft &rhs) {
+            return lhs.name.compare(rhs.name, Qt::CaseInsensitive) < 0;
+        });
+        return true;
+    }
+
+    void loadBook() {
+        const QString path = openerDatabasePath(repoRoot_);
+        QString error;
+        std::vector<OpenerGroupDraft> loaded;
+        if (!parseBook(path, &loaded, &error)) {
+            statusLabel_->setText(error);
+            DiagnosticLog::instance().append("Opener importer load failed: " + error);
+            return;
+        }
+        book_ = std::move(loaded);
+        refreshBookList();
+        newGroup();
+        statusLabel_->setText(QString("Loaded %1 opener groups from %2").arg(book_.size()).arg(path));
+        DiagnosticLog::instance().append(
+            QString("Opener importer loaded %1 groups from %2").arg(book_.size()).arg(path));
+    }
+
+    void newGroup() {
+        updating_ = true;
+        current_ = OpenerGroupDraft();
+        current_.variations.push_back(OpenerVariationDraft{"Standard", "", {}, 0});
+        selectedVariation_ = 0;
+        openerNameEdit_->clear();
+        earlyVariantCheck_->setChecked(false);
+        baseCodeEdit_->clear();
+        basePageSpin_->setRange(1, 1);
+        refreshVariationSelector();
+        updating_ = false;
+        showSelectedVariation();
+        refreshPreviewSources();
+        statusLabel_->setText("New opener group");
+    }
+
+    void commitCurrentEdits() {
+        current_.name = openerNameEdit_->text().trimmed();
+        current_.earlyVariantDetection = earlyVariantCheck_->isChecked();
+        current_.base.code = baseCodeEdit_->toPlainText().trimmed();
+        if (selectedVariation_ >= 0 && selectedVariation_ < static_cast<int>(current_.variations.size())) {
+            current_.variations[selectedVariation_].name = variationNameEdit_->text().trimmed();
+            current_.variations[selectedVariation_].code = variationCodeEdit_->toPlainText().trimmed();
+        }
+    }
+
+    bool decodeDraft(OpenerVariationDraft *draft, const QString &label, bool showError = true) {
+        draft->code = draft->code.trimmed();
+        if (!draft->code.startsWith("v115@")) {
+            if (showError) {
+                statusLabel_->setText(label + " must begin with v115@");
+            }
+            return false;
+        }
+        const auto decoded = decodeFumenV115(draft->code);
+        if (!decoded.has_value() || decoded->pages.empty()) {
+            if (showError) {
+                statusLabel_->setText("Could not decode " + label);
+            }
+            return false;
+        }
+        draft->pages = decoded->pages;
+        draft->selectedPage = qBound(0, draft->selectedPage, static_cast<int>(draft->pages.size()) - 1);
+        return true;
+    }
+
+    bool validateCurrent(QString *error) {
+        commitCurrentEdits();
+        if (current_.name.isEmpty()) {
+            *error = "Add an opener name.";
+            return false;
+        }
+        if (!decodeDraft(&current_.base, "Base fumen", false)) {
+            *error = "Add a valid base fumen beginning with v115@.";
+            return false;
+        }
+        QSet<QString> names;
+        QSet<QString> codes{current_.base.code};
+        for (OpenerVariationDraft &variation : current_.variations) {
+            if (variation.name.isEmpty() && variation.code.isEmpty()) {
+                continue;
+            }
+            if (variation.name.isEmpty() || !decodeDraft(&variation, "Variation fumen", false)) {
+                *error = "Every variation needs a name and valid fumen code.";
+                return false;
+            }
+            const QString nameKey = variation.name.toLower();
+            if (names.contains(nameKey) || codes.contains(variation.code)) {
+                *error = "Variation names and fumen codes must be unique within the group.";
+                return false;
+            }
+            names.insert(nameKey);
+            codes.insert(variation.code);
+        }
+        current_.variations.erase(
+            std::remove_if(
+                current_.variations.begin(),
+                current_.variations.end(),
+                [](const OpenerVariationDraft &variation) {
+                    return variation.name.isEmpty() && variation.code.isEmpty();
+                }),
+            current_.variations.end());
+        return true;
+    }
+
+    void addOrUpdateCurrentGroup() {
+        QString error;
+        if (!validateCurrent(&error)) {
+            statusLabel_->setText(error);
+            return;
+        }
+        book_.erase(
+            std::remove_if(book_.begin(), book_.end(), [this](const OpenerGroupDraft &group) {
+                return group.name.compare(current_.name, Qt::CaseInsensitive) == 0;
+            }),
+            book_.end());
+        book_.push_back(current_);
+        std::sort(book_.begin(), book_.end(), [](const OpenerGroupDraft &lhs, const OpenerGroupDraft &rhs) {
+            return lhs.name.compare(rhs.name, Qt::CaseInsensitive) < 0;
+        });
+        const QString name = current_.name;
+        refreshBookList();
+        newGroup();
+        statusLabel_->setText("Added " + name + " to the book draft");
+    }
+
+    void saveBook() {
+        commitCurrentEdits();
+        const bool hasDraft = !current_.name.isEmpty() || !current_.base.code.isEmpty();
+        if (hasDraft) {
+            QString error;
+            if (!validateCurrent(&error)) {
+                statusLabel_->setText("Current draft was not saved: " + error);
+                return;
+            }
+            book_.erase(
+                std::remove_if(book_.begin(), book_.end(), [this](const OpenerGroupDraft &group) {
+                    return group.name.compare(current_.name, Qt::CaseInsensitive) == 0;
+                }),
+                book_.end());
+            book_.push_back(current_);
+        }
+        if (book_.empty()) {
+            statusLabel_->setText("The opener book cannot be empty.");
+            return;
+        }
+        std::sort(book_.begin(), book_.end(), [](const OpenerGroupDraft &lhs, const OpenerGroupDraft &rhs) {
+            return lhs.name.compare(rhs.name, Qt::CaseInsensitive) < 0;
+        });
+
+        QJsonArray records;
+        QJsonObject empty;
+        empty.insert("id", "empty");
+        empty.insert("name", "Empty board");
+        empty.insert("openerName", "Empty board");
+        empty.insert("variationName", "Empty");
+        empty.insert("cells", QJsonArray());
+        records.append(empty);
+        for (const OpenerGroupDraft &group : book_) {
+            auto appendRecord = [&](const OpenerVariationDraft &variation, bool base) {
+                QJsonObject record;
+                const QString variationName = base ? "Base" : variation.name;
+                record.insert(
+                    "id",
+                    openerSlug(group.name) + "-" + (base ? "base" : openerSlug(variationName)));
+                record.insert("name", group.name + " " + variationName);
+                record.insert("openerName", group.name);
+                record.insert("variationName", variationName);
+                record.insert("code", variation.code);
+                if (group.earlyVariantDetection) {
+                    record.insert("earlyVariantDetection", true);
+                }
+                records.append(record);
+            };
+            appendRecord(group.base, true);
+            for (const OpenerVariationDraft &variation : group.variations) {
+                appendRecord(variation, false);
+            }
+        }
+
+        QJsonObject database;
+        database.insert("version", 1);
+        database.insert("openers", records);
+        QSaveFile file(editableOpenerDatabasePath());
+        if (!file.open(QIODevice::WriteOnly)) {
+            statusLabel_->setText("Could not open the editable opener database for writing.");
+            return;
+        }
+        file.write(QJsonDocument(database).toJson(QJsonDocument::Indented));
+        if (!file.commit()) {
+            statusLabel_->setText("Could not finish saving the opener database.");
+            return;
+        }
+        refreshBookList();
+        if (databaseChanged_) {
+            databaseChanged_();
+        }
+        const QString message =
+            QString("Saved %1 opener groups to %2").arg(book_.size()).arg(editableOpenerDatabasePath());
+        statusLabel_->setText(message);
+        DiagnosticLog::instance().append(message);
+    }
+
+    void decodeBase() {
+        current_.base.code = baseCodeEdit_->toPlainText().trimmed();
+        if (!decodeDraft(&current_.base, "Base fumen")) {
+            return;
+        }
+        updatePageSpin(basePageSpin_, current_.base);
+        refreshPreviewSources();
+        previewSourceBox_->setCurrentIndex(0);
+        refreshPreview();
+        statusLabel_->setText(
+            QString("Decoded base: %1 page%2")
+                .arg(current_.base.pages.size())
+                .arg(current_.base.pages.size() == 1 ? "" : "s"));
+    }
+
+    void decodeVariation() {
+        if (selectedVariation_ < 0 || selectedVariation_ >= static_cast<int>(current_.variations.size())) {
+            return;
+        }
+        OpenerVariationDraft &variation = current_.variations[selectedVariation_];
+        variation.name = variationNameEdit_->text().trimmed();
+        variation.code = variationCodeEdit_->toPlainText().trimmed();
+        if (!decodeDraft(&variation, "Variation fumen")) {
+            return;
+        }
+        updatePageSpin(variationPageSpin_, variation);
+        refreshVariationSelector();
+        refreshPreviewSources();
+        previewSourceBox_->setCurrentIndex(selectedVariation_ + 1);
+        refreshPreview();
+        statusLabel_->setText(
+            QString("Decoded %1: %2 page%3")
+                .arg(variation.name)
+                .arg(variation.pages.size())
+                .arg(variation.pages.size() == 1 ? "" : "s"));
+    }
+
+    void screenshotBase() {
+        const auto image = captureBoardScreenshot(this);
+        if (!image.has_value()) {
+            return;
+        }
+        const auto cells = fumenCellsFromBoardImage(*image, true);
+        if (!cells.has_value()) {
+            statusLabel_->setText("Could not read the screenshot as a Tetris board.");
+            DiagnosticLog::instance().append("Opener importer could not classify the base screenshot.");
+            return;
+        }
+        current_.base.pages = {*cells};
+        current_.base.selectedPage = 0;
+        current_.base.code = encodeFumenFields(current_.base.pages);
+        baseCodeEdit_->setPlainText(current_.base.code);
+        updatePageSpin(basePageSpin_, current_.base);
+        refreshPreviewSources();
+        previewSourceBox_->setCurrentIndex(0);
+        refreshPreview();
+        statusLabel_->setText("Imported opener base screenshot.");
+        DiagnosticLog::instance().append("Opener importer captured a base screenshot.");
+    }
+
+    void screenshotVariation() {
+        if (selectedVariation_ < 0 || selectedVariation_ >= static_cast<int>(current_.variations.size())) {
+            return;
+        }
+        const auto image = captureBoardScreenshot(this);
+        if (!image.has_value()) {
+            return;
+        }
+        auto cells = fumenCellsFromBoardImage(*image, true);
+        if (!cells.has_value()) {
+            statusLabel_->setText("Could not read the screenshot as a Tetris board.");
+            DiagnosticLog::instance().append("Opener importer could not classify the variation screenshot.");
+            return;
+        }
+        if (current_.base.pages.empty() && baseCodeEdit_->toPlainText().trimmed().startsWith("v115@")) {
+            current_.base.code = baseCodeEdit_->toPlainText().trimmed();
+            decodeDraft(&current_.base, "Base fumen", false);
+        }
+        if (!current_.base.pages.empty()) {
+            const int page = qBound(
+                0, current_.base.selectedPage, static_cast<int>(current_.base.pages.size()) - 1);
+            const auto &base = current_.base.pages[page];
+            for (int index = 0; index < kFumenBlocks; ++index) {
+                if (base[index] != 0 && (*cells)[index] != 0) {
+                    (*cells)[index] = 8;
+                }
+            }
+        }
+        OpenerVariationDraft &variation = current_.variations[selectedVariation_];
+        variation.name = variationNameEdit_->text().trimmed();
+        variation.pages = {*cells};
+        variation.selectedPage = 0;
+        variation.code = encodeFumenFields(variation.pages);
+        variationCodeEdit_->setPlainText(variation.code);
+        updatePageSpin(variationPageSpin_, variation);
+        refreshPreviewSources();
+        previewSourceBox_->setCurrentIndex(selectedVariation_ + 1);
+        refreshPreview();
+        statusLabel_->setText("Imported variation screenshot; overlapping base cells are gray.");
+        DiagnosticLog::instance().append("Opener importer captured a variation screenshot.");
+    }
+
+    void addVariation() {
+        commitCurrentEdits();
+        current_.variations.push_back(
+            OpenerVariationDraft{QString("Variation %1").arg(current_.variations.size() + 1), "", {}, 0});
+        selectedVariation_ = static_cast<int>(current_.variations.size()) - 1;
+        refreshVariationSelector();
+        showSelectedVariation();
+        refreshPreviewSources();
+    }
+
+    void removeVariation() {
+        if (selectedVariation_ < 0 || selectedVariation_ >= static_cast<int>(current_.variations.size())) {
+            return;
+        }
+        current_.variations.erase(current_.variations.begin() + selectedVariation_);
+        selectedVariation_ = qMin(selectedVariation_, static_cast<int>(current_.variations.size()) - 1);
+        refreshVariationSelector();
+        showSelectedVariation();
+        refreshPreviewSources();
+    }
+
+    void selectVariation(int index) {
+        if (updating_) {
+            return;
+        }
+        if (selectedVariation_ >= 0 && selectedVariation_ < static_cast<int>(current_.variations.size())) {
+            current_.variations[selectedVariation_].name = variationNameEdit_->text().trimmed();
+            current_.variations[selectedVariation_].code = variationCodeEdit_->toPlainText().trimmed();
+        }
+        selectedVariation_ = index;
+        showSelectedVariation();
+    }
+
+    void showSelectedVariation() {
+        updating_ = true;
+        const bool valid =
+            selectedVariation_ >= 0 &&
+            selectedVariation_ < static_cast<int>(current_.variations.size());
+        variationNameEdit_->setEnabled(valid);
+        variationCodeEdit_->setEnabled(valid);
+        variationPageSpin_->setEnabled(valid);
+        removeVariationButton_->setEnabled(valid);
+        if (valid) {
+            const OpenerVariationDraft &variation = current_.variations[selectedVariation_];
+            variationNameEdit_->setText(variation.name);
+            variationCodeEdit_->setPlainText(variation.code);
+            updatePageSpin(variationPageSpin_, variation);
+        } else {
+            variationNameEdit_->clear();
+            variationCodeEdit_->clear();
+            variationPageSpin_->setRange(1, 1);
+        }
+        updating_ = false;
+    }
+
+    void refreshVariationSelector() {
+        updating_ = true;
+        variationBox_->clear();
+        for (const OpenerVariationDraft &variation : current_.variations) {
+            variationBox_->addItem(variation.name.isEmpty() ? "Unnamed variation" : variation.name);
+        }
+        if (!current_.variations.empty()) {
+            selectedVariation_ = qBound(
+                0, selectedVariation_, static_cast<int>(current_.variations.size()) - 1);
+            variationBox_->setCurrentIndex(selectedVariation_);
+        } else {
+            selectedVariation_ = -1;
+        }
+        updating_ = false;
+    }
+
+    void refreshPreviewSources() {
+        const int previous = previewSourceBox_->currentIndex();
+        previewSourceBox_->blockSignals(true);
+        previewSourceBox_->clear();
+        previewSourceBox_->addItem("Base", -1);
+        for (int index = 0; index < static_cast<int>(current_.variations.size()); ++index) {
+            const QString name = current_.variations[index].name.isEmpty()
+                ? QString("Variation %1").arg(index + 1)
+                : current_.variations[index].name;
+            previewSourceBox_->addItem(name, index);
+        }
+        previewSourceBox_->setCurrentIndex(qBound(0, previous, previewSourceBox_->count() - 1));
+        previewSourceBox_->blockSignals(false);
+        refreshPreview();
+    }
+
+    void refreshPreview() {
+        std::array<int, kColumns * kRows> blank{};
+        blank.fill(0);
+        if (!previewBoard_ || !previewSourceBox_) {
+            return;
+        }
+        const int variationIndex = previewSourceBox_->currentData().toInt();
+        const OpenerVariationDraft *source = variationIndex < 0
+            ? &current_.base
+            : (variationIndex < static_cast<int>(current_.variations.size())
+                   ? &current_.variations[variationIndex]
+                   : nullptr);
+        if (!source || source->pages.empty()) {
+            previewBoard_->setCells(blank);
+            return;
+        }
+        const int page =
+            qBound(0, source->selectedPage, static_cast<int>(source->pages.size()) - 1);
+        previewBoard_->setCells(visibleFumenCells(source->pages[page]));
+    }
+
+    void updatePageSpin(QSpinBox *spin, const OpenerVariationDraft &draft) {
+        const int count = qMax(1, static_cast<int>(draft.pages.size()));
+        spin->blockSignals(true);
+        spin->setRange(1, count);
+        spin->setValue(qBound(1, draft.selectedPage + 1, count));
+        spin->blockSignals(false);
+    }
+
+    void refreshBookList() {
+        bookList_->clear();
+        for (const OpenerGroupDraft &group : book_) {
+            auto *item = new QListWidgetItem(
+                QString("%1\n%2 fumen code%3%4")
+                    .arg(group.name)
+                    .arg(1 + group.variations.size())
+                    .arg(group.variations.empty() ? "" : "s")
+                    .arg(group.earlyVariantDetection ? " | variant at 6" : ""),
+                bookList_);
+            item->setData(Qt::UserRole, group.name);
+        }
+    }
+
+    void editSelectedBookGroup() {
+        const int row = bookList_->currentRow();
+        if (row < 0 || row >= static_cast<int>(book_.size())) {
+            return;
+        }
+        current_ = book_[row];
+        selectedVariation_ = current_.variations.empty() ? -1 : 0;
+        updating_ = true;
+        openerNameEdit_->setText(current_.name);
+        earlyVariantCheck_->setChecked(current_.earlyVariantDetection);
+        baseCodeEdit_->setPlainText(current_.base.code);
+        updatePageSpin(basePageSpin_, current_.base);
+        refreshVariationSelector();
+        updating_ = false;
+        showSelectedVariation();
+        refreshPreviewSources();
+        statusLabel_->setText("Editing " + current_.name);
+    }
+
+    void removeSelectedBookGroup() {
+        const int row = bookList_->currentRow();
+        if (row < 0 || row >= static_cast<int>(book_.size())) {
+            return;
+        }
+        const QString name = book_[row].name;
+        const auto answer = QMessageBox::question(
+            this,
+            "Remove Opener Group",
+            "Remove " + name + " from the opener book draft?");
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+        book_.erase(book_.begin() + row);
+        refreshBookList();
+        statusLabel_->setText("Removed " + name + " from the book draft");
+    }
+
+    QString repoRoot_;
+    std::function<void()> databaseChanged_;
+    std::vector<OpenerGroupDraft> book_;
+    OpenerGroupDraft current_;
+    int selectedVariation_ = -1;
+    bool updating_ = false;
+
+    QLineEdit *openerNameEdit_ = nullptr;
+    QCheckBox *earlyVariantCheck_ = nullptr;
+    QPlainTextEdit *baseCodeEdit_ = nullptr;
+    QSpinBox *basePageSpin_ = nullptr;
+    QComboBox *variationBox_ = nullptr;
+    QPushButton *removeVariationButton_ = nullptr;
+    QLineEdit *variationNameEdit_ = nullptr;
+    QPlainTextEdit *variationCodeEdit_ = nullptr;
+    QSpinBox *variationPageSpin_ = nullptr;
+    QComboBox *previewSourceBox_ = nullptr;
+    BoardWidget *previewBoard_ = nullptr;
+    QListWidget *bookList_ = nullptr;
+    QLabel *statusLabel_ = nullptr;
 };
 
 class MainWindow : public QMainWindow {
@@ -1033,7 +2142,9 @@ public:
         : QMainWindow(parent),
           repoRoot_(findRepoRoot(QCoreApplication::applicationDirPath())) {
         setWindowTitle("Solution Finder Enhanced - Qt");
-        resize(1180, 760);
+        setMinimumSize(980, 700);
+        resize(1250, 800);
+        buildMenus();
         buildUi();
         ensureFumenState();
         loadOpeners();
@@ -1047,28 +2158,145 @@ public:
             process_->kill();
             process_->waitForFinished(2000);
         }
+        if (pcScoutProcess_ && pcScoutProcess_->state() != QProcess::NotRunning) {
+            pcScoutProcess_->kill();
+            pcScoutProcess_->waitForFinished(2000);
+        }
+        if (auxiliaryScoutProcess_ && auxiliaryScoutProcess_->state() != QProcess::NotRunning) {
+            auxiliaryScoutProcess_->kill();
+            auxiliaryScoutProcess_->waitForFinished(2000);
+        }
     }
 
 private:
+    void buildMenus() {
+#ifdef Q_OS_MAC
+        menuBar()->setNativeMenuBar(true);
+#else
+        menuBar()->setNativeMenuBar(false);
+#endif
+        auto *toolsMenu = menuBar()->addMenu("Tools");
+        auto *importerAction = toolsMenu->addAction("Opener Importer");
+        importerAction->setShortcut(QKeySequence("Ctrl+Shift+I"));
+        auto *logAction = toolsMenu->addAction("Output Log");
+        logAction->setShortcut(QKeySequence("Ctrl+Shift+D"));
+        toolsMenu->addSeparator();
+        auto *installDatabaseAction = toolsMenu->addAction("Install Editable Opener Database");
+        auto *showDatabaseAction = toolsMenu->addAction("Show Opener Database Folder");
+
+        connect(importerAction, &QAction::triggered, this, [this]() {
+            showOpenerImporter();
+        });
+        connect(logAction, &QAction::triggered, this, [this]() {
+            showOutputLog();
+        });
+        connect(installDatabaseAction, &QAction::triggered, this, [this]() {
+            installEditableOpenerDatabase();
+        });
+        connect(showDatabaseAction, &QAction::triggered, this, [this]() {
+            showOpenerDatabaseFolder();
+        });
+    }
+
+    void showOpenerImporter() {
+        if (!openerImporterDialog_) {
+            openerImporterDialog_ = new OpenerImporterDialog(
+                repoRoot_,
+                [this]() {
+                    loadOpeners(false);
+                    DiagnosticLog::instance().append("Reloaded the opener database after saving.");
+                },
+                this);
+        }
+        openerImporterDialog_->show();
+        openerImporterDialog_->raise();
+        openerImporterDialog_->activateWindow();
+    }
+
+    void showOutputLog() {
+        if (!outputLogDialog_) {
+            outputLogDialog_ = new OutputLogDialog(this);
+        }
+        outputLogDialog_->show();
+        outputLogDialog_->raise();
+        outputLogDialog_->activateWindow();
+    }
+
+    void installEditableOpenerDatabase() {
+        const QString destination = editableOpenerDatabasePath();
+        if (!QFileInfo::exists(destination)) {
+            const QString source = QDir(repoRoot_).filePath("shared/openers.json");
+            QDir().mkpath(QFileInfo(destination).absolutePath());
+            if (!QFile::copy(source, destination)) {
+                QMessageBox::warning(
+                    this,
+                    "Editable Opener Database",
+                    "Could not copy the bundled opener database to:\n" + destination);
+                DiagnosticLog::instance().append(
+                    "Failed to install editable opener database at " + destination);
+                return;
+            }
+            loadOpeners(false);
+            DiagnosticLog::instance().append("Installed editable opener database at " + destination);
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(destination).absolutePath()));
+    }
+
+    void showOpenerDatabaseFolder() {
+        const QString folder = QFileInfo(editableOpenerDatabasePath()).absolutePath();
+        QDir().mkpath(folder);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    }
+
     void buildUi() {
         auto *root = new QWidget(this);
-        auto *mainLayout = new QHBoxLayout(root);
-        mainLayout->setContentsMargins(14, 14, 14, 14);
-        mainLayout->setSpacing(14);
+        auto *mainLayout = new QVBoxLayout(root);
+        mainLayout->setContentsMargins(0, 0, 0, 0);
+        mainLayout->setSpacing(0);
 
-        mainLayout->addWidget(buildSettingsPanel(), 0);
-        mainLayout->addWidget(buildBoardPanel(), 2);
-        mainLayout->addWidget(buildOutputPanel(), 1);
+        auto *splitter = new QSplitter(Qt::Horizontal, root);
+        splitter->setObjectName("mainSplitter");
+        splitter->setChildrenCollapsible(false);
+        splitter->setHandleWidth(1);
+
+        auto makeSidebar = [splitter](QWidget *content) {
+            auto *scroll = new QScrollArea(splitter);
+            scroll->setWidgetResizable(true);
+            scroll->setFrameShape(QFrame::NoFrame);
+            scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            scroll->setMinimumWidth(260);
+            scroll->setMaximumWidth(380);
+            scroll->setWidget(content);
+            return scroll;
+        };
+
+        auto *left = makeSidebar(buildSettingsPanel());
+        auto *center = buildBoardPanel();
+        center->setMinimumWidth(320);
+        auto *right = makeSidebar(buildOutputPanel());
+
+        splitter->addWidget(left);
+        splitter->addWidget(center);
+        splitter->addWidget(right);
+        splitter->setStretchFactor(0, 0);
+        splitter->setStretchFactor(1, 1);
+        splitter->setStretchFactor(2, 0);
+        splitter->setSizes({315, 620, 315});
+        mainLayout->addWidget(splitter, 1);
 
         setCentralWidget(root);
     }
 
     QWidget *buildSettingsPanel() {
         auto *panel = new QWidget(this);
-        panel->setMinimumWidth(300);
-        panel->setMaximumWidth(360);
-        auto *layout = new QVBoxLayout(panel);
-        layout->setContentsMargins(0, 0, 0, 0);
+        panel->setMinimumWidth(260);
+        auto *outerLayout = new QVBoxLayout(panel);
+        outerLayout->setContentsMargins(0, 0, 0, 0);
+        outerLayout->setSpacing(0);
+
+        searchSettingsPanel_ = new QWidget(panel);
+        auto *layout = new QVBoxLayout(searchSettingsPanel_);
+        layout->setContentsMargins(14, 14, 14, 14);
         layout->setSpacing(12);
 
         auto *commandGroup = new QGroupBox("Search Settings", panel);
@@ -1123,20 +2351,26 @@ private:
         openerLayout->addRow("Base", openerGroupBox_);
         openerLayout->addRow("Variation", openerVariationBox_);
         auto *openerActions = new QHBoxLayout();
-        auto *screenshotButton = new QPushButton("Screenshot", openerGroup);
         auto *detectorButton = new QPushButton("Opener Detector", openerGroup);
-        openerActions->addWidget(screenshotButton);
         openerActions->addWidget(detectorButton);
         openerLayout->addRow("", openerActions);
         layout->addWidget(openerGroup);
 
-        auto *actions = new QHBoxLayout();
-        runButton_ = new QPushButton("Run Search", panel);
-        cancelButton_ = new QPushButton("Cancel", panel);
-        cancelButton_->setEnabled(false);
-        actions->addWidget(runButton_);
-        actions->addWidget(cancelButton_);
-        layout->addLayout(actions);
+        auto *fumenCodeGroup = new QGroupBox("Fumen Code", panel);
+        auto *fumenCodeLayout = new QVBoxLayout(fumenCodeGroup);
+        fumenEdit_ = new QPlainTextEdit(fumenCodeGroup);
+        fumenEdit_->setPlaceholderText("Paste or select a fumen code.");
+        fumenEdit_->setMaximumHeight(76);
+        fumenCodeLayout->addWidget(fumenEdit_);
+        layout->addWidget(fumenCodeGroup);
+
+        auto *fieldGroup = new QGroupBox("sfinder Field", panel);
+        auto *fieldLayout = new QVBoxLayout(fieldGroup);
+        generatedField_ = new QPlainTextEdit(fieldGroup);
+        generatedField_->setReadOnly(true);
+        generatedField_->setMaximumHeight(120);
+        fieldLayout->addWidget(generatedField_);
+        layout->addWidget(fieldGroup);
 
         layout->addStretch(1);
 
@@ -1146,44 +2380,202 @@ private:
         connect(openerVariationBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             loadSelectedOpener();
         });
-        connect(screenshotButton, &QPushButton::clicked, this, [this]() {
-            importBoardScreenshot();
-        });
         connect(detectorButton, &QPushButton::clicked, this, [this]() {
             detectOpeningFromScreenshot();
         });
         connect(commandBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
             updateCommandUi();
         });
-        connect(runButton_, &QPushButton::clicked, this, [this]() {
-            runSearch();
+        connect(fumenEdit_, &QPlainTextEdit::textChanged, this, [this]() {
+            loadFumenCodeFromText();
         });
-        connect(cancelButton_, &QPushButton::clicked, this, [this]() {
-            cancelSearch();
-        });
-
         selectPaint(8);
         updateCommandUi();
+
+        playSettingsPanel_ = buildPlaySettingsPanel(panel);
+        playSettingsPanel_->setVisible(false);
+        outerLayout->addWidget(searchSettingsPanel_);
+        outerLayout->addWidget(playSettingsPanel_);
+        return panel;
+    }
+
+    QWidget *buildPlaySettingsPanel(QWidget *parent) {
+        auto *panel = new QWidget(parent);
+        auto *layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setSpacing(12);
+
+        auto *gameGroup = new QGroupBox("Game Settings", panel);
+        auto *gameLayout = new QVBoxLayout(gameGroup);
+        playQueueEdit_ = new QLineEdit(gameGroup);
+        playQueueEdit_->setPlaceholderText("Queue, e.g. TILJSZO");
+        gameLayout->addWidget(playQueueEdit_);
+        auto *holdRow = new QHBoxLayout();
+        holdRow->addWidget(new QLabel("Hold", gameGroup));
+        playHoldBox_ = new QComboBox(gameGroup);
+        playHoldBox_->addItems({"-", "I", "L", "O", "Z", "T", "J", "S"});
+        auto *applyButton = new QPushButton("Apply", gameGroup);
+        holdRow->addWidget(playHoldBox_, 1);
+        holdRow->addWidget(applyButton);
+        gameLayout->addLayout(holdRow);
+        auto *randomButton = new QPushButton("Random 7-bag", gameGroup);
+        gameLayout->addWidget(randomButton);
+        auto *queueHelp = new QLabel("Queue accepts piece letters; spaces and commas are ignored.", gameGroup);
+        queueHelp->setWordWrap(true);
+        queueHelp->setObjectName("paneSubtitle");
+        gameLayout->addWidget(queueHelp);
+        layout->addWidget(gameGroup);
+
+        auto *controlsGroup = new QGroupBox("Controls", panel);
+        auto *controlsForm = new QFormLayout(controlsGroup);
+        const std::array<QString, 10> labels = {"Left", "Right", "Soft", "Hard", "CW", "CCW", "180", "Hold", "Undo", "Reset"};
+        const std::array<QString, 10> defaults = {"a", "d", "s", "space", "w", "q", "e", "c", "z", "r"};
+        for (int i = 0; i < static_cast<int>(playControlEdits_.size()); ++i) {
+            playControlEdits_[i] = new QLineEdit(controlsGroup);
+            playControlEdits_[i]->setMaximumWidth(110);
+            playControlEdits_[i]->setText(defaults[i]);
+            controlsForm->addRow(labels[i], playControlEdits_[i]);
+            connect(playControlEdits_[i], &QLineEdit::editingFinished, this, [this]() { savePlaySettings(); });
+        }
+        layout->addWidget(controlsGroup);
+
+        auto *tuningGroup = new QGroupBox("Tuning", panel);
+        auto *tuningForm = new QFormLayout(tuningGroup);
+        auto makeTuning = [tuningGroup, tuningForm](const QString &label, int minimum, int maximum, int value) {
+            auto *spin = new QSpinBox(tuningGroup);
+            spin->setRange(minimum, maximum);
+            spin->setValue(value);
+            spin->setSuffix(" ms");
+            tuningForm->addRow(label, spin);
+            return spin;
+        };
+        playDasSpin_ = makeTuning("DAS", 0, 300, 130);
+        playArrSpin_ = makeTuning("ARR", 0, 120, 28);
+        playSoftSpin_ = makeTuning("Soft", 0, 250, 75);
+        playGravityLevelBox_ = new QComboBox(tuningGroup);
+        for (int level = 1; level <= 30; ++level) {
+            playGravityLevelBox_->addItem(QString("Level %1").arg(level), level);
+        }
+        tuningForm->addRow("Start level", playGravityLevelBox_);
+        playLockSpin_ = makeTuning("Lock", 0, 1000, 500);
+        playMoveResetLimitSpin_ = new QSpinBox(tuningGroup);
+        playMoveResetLimitSpin_->setRange(1, 99);
+        playMoveResetLimitSpin_->setValue(15);
+        tuningForm->addRow("Move limit", playMoveResetLimitSpin_);
+        playPreviewSpin_ = new QSpinBox(tuningGroup);
+        playPreviewSpin_->setRange(8, 20);
+        playPreviewSpin_->setValue(14);
+        playPreviewSpin_->setSuffix(" px");
+        tuningForm->addRow("Preview", playPreviewSpin_);
+        playGravityCheck_ = new QCheckBox("Gravity", tuningGroup);
+        playGravityCheck_->setChecked(true);
+        playLevelProgressionCheck_ = new QCheckBox("Level progression", tuningGroup);
+        playMoveResetCheck_ = new QCheckBox("Move reset", tuningGroup);
+        playMoveResetCheck_->setChecked(true);
+        playStepResetCheck_ = new QCheckBox("Step reset", tuningGroup);
+        playInfiniteLockCheck_ = new QCheckBox("Infinite lock delay", tuningGroup);
+        playInfiniteHoldCheck_ = new QCheckBox("Infinite hold", tuningGroup);
+        playExportActiveCheck_ = new QCheckBox("Export active piece", tuningGroup);
+        auto *rules = new QWidget(tuningGroup);
+        auto *rulesLayout = new QVBoxLayout(rules);
+        rulesLayout->setContentsMargins(0, 0, 0, 0);
+        rulesLayout->addWidget(playGravityCheck_);
+        rulesLayout->addWidget(playLevelProgressionCheck_);
+        rulesLayout->addWidget(playMoveResetCheck_);
+        rulesLayout->addWidget(playStepResetCheck_);
+        rulesLayout->addWidget(playInfiniteLockCheck_);
+        rulesLayout->addWidget(playInfiniteHoldCheck_);
+        rulesLayout->addWidget(playExportActiveCheck_);
+        tuningForm->addRow("Rules", rules);
+        layout->addWidget(tuningGroup);
+        layout->addStretch(1);
+
+        const std::array<QSpinBox *, 5> tuningSpins = {
+            playDasSpin_, playArrSpin_, playSoftSpin_, playMoveResetLimitSpin_, playPreviewSpin_
+        };
+        for (auto *spin : tuningSpins) {
+            connect(spin, qOverload<int>(&QSpinBox::valueChanged), this, [this]() {
+                savePlaySettings();
+                applyPlayTuning();
+                updatePiecePreviewSizes();
+            });
+        }
+        connect(playLockSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+            if (updatingPlayLevelLock_) {
+                return;
+            }
+            playConfiguredLockDelay_ = value;
+            const int level = playGravityLevelBox_->currentData().toInt();
+            if (level > 20 && value != sft_game_lock_delay_for_level(level)) {
+                playConfiguredGravityLevel_ = 20;
+                sft_game_reset_level_progression(&playGame_, 20);
+                updatingPlayLevelLock_ = true;
+                playGravityLevelBox_->setCurrentIndex(19);
+                updatingPlayLevelLock_ = false;
+            }
+            savePlaySettings();
+            applyPlayTuning();
+        });
+        connect(playGravityLevelBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            if (updatingPlayLevelLock_) {
+                return;
+            }
+            const int level = playGravityLevelBox_->currentData().toInt();
+            playConfiguredGravityLevel_ = level;
+            if (loadingPlaySettings_) {
+                return;
+            }
+            sft_game_reset_level_progression(&playGame_, level);
+            if (level >= 20) {
+                playConfiguredLockDelay_ = sft_game_lock_delay_for_level(level);
+                updatingPlayLevelLock_ = true;
+                playLockSpin_->setValue(playConfiguredLockDelay_);
+                updatingPlayLevelLock_ = false;
+            }
+            savePlaySettings();
+            applyPlayTuning();
+        });
+        connect(playMoveResetCheck_, &QCheckBox::toggled, this, [this](bool enabled) {
+            if (enabled && playStepResetCheck_->isChecked()) {
+                playStepResetCheck_->setChecked(false);
+            }
+            playMoveResetLimitSpin_->setEnabled(enabled);
+        });
+        connect(playStepResetCheck_, &QCheckBox::toggled, this, [this](bool enabled) {
+            if (enabled && playMoveResetCheck_->isChecked()) {
+                playMoveResetCheck_->setChecked(false);
+            }
+        });
+        const std::array<QCheckBox *, 7> ruleChecks = {
+            playGravityCheck_, playLevelProgressionCheck_, playMoveResetCheck_, playStepResetCheck_,
+            playInfiniteLockCheck_, playInfiniteHoldCheck_, playExportActiveCheck_
+        };
+        for (auto *check : ruleChecks) {
+            connect(check, &QCheckBox::toggled, this, [this]() {
+                savePlaySettings();
+                applyPlayTuning();
+            });
+        }
+        connect(applyButton, &QPushButton::clicked, this, [this]() { applyPlayQueueAndHold(); });
+        connect(randomButton, &QPushButton::clicked, this, [this]() {
+            playQueueEdit_->clear();
+            playHoldBox_->setCurrentIndex(0);
+            resetPlayGame();
+        });
+        connect(playQueueEdit_, &QLineEdit::editingFinished, this, [this]() { savePlaySettings(); });
+        connect(playHoldBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() { savePlaySettings(); });
+
+        loadPlaySettings();
         return panel;
     }
 
     QWidget *buildBoardPanel() {
         auto *panel = new QWidget(this);
         auto *layout = new QVBoxLayout(panel);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(8);
+        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setSpacing(12);
 
         auto *titleRow = new QHBoxLayout();
-        auto *titleBlock = new QVBoxLayout();
-        auto *title = new QLabel("Fumen Editor", panel);
-        title->setObjectName("paneTitle");
-        auto *subtitle = new QLabel("Native Qt board editor with sfinder command output.", panel);
-        subtitle->setObjectName("paneSubtitle");
-        titleBlock->addWidget(title);
-        titleBlock->addWidget(subtitle);
-        titleRow->addLayout(titleBlock);
-        titleRow->addStretch(1);
-
         sectionTabs_ = new QTabBar(panel);
         sectionTabs_->setObjectName("sectionTabs");
         sectionTabs_->addTab("Editor");
@@ -1191,8 +2583,22 @@ private:
         sectionTabs_->addTab("Output");
         sectionTabs_->addTab("Preview");
         sectionTabs_->setExpanding(false);
+        titleRow->addStretch(1);
         titleRow->addWidget(sectionTabs_);
+        titleRow->addStretch(1);
         layout->addLayout(titleRow);
+
+        auto *actionRow = new QHBoxLayout();
+        screenshotButton_ = new QPushButton("Screenshot", panel);
+        runButton_ = new QPushButton("Run Search", panel);
+        cancelButton_ = new QPushButton("Cancel", panel);
+        runButton_->setObjectName("primaryButton");
+        cancelButton_->setEnabled(false);
+        actionRow->addWidget(screenshotButton_);
+        actionRow->addWidget(runButton_);
+        actionRow->addWidget(cancelButton_);
+        actionRow->addStretch(1);
+        layout->addLayout(actionRow);
 
         centerStack_ = new QStackedWidget(panel);
         auto *editorPage = new QWidget(centerStack_);
@@ -1201,7 +2607,7 @@ private:
         editorLayout->setSpacing(8);
 
         auto *toolbar = new QHBoxLayout();
-        auto *clearButton = new QPushButton("Clear Board", panel);
+        auto *clearButton = new QPushButton("Clear Page", panel);
         auto *mirrorButton = new QPushButton("Mirror", panel);
         toolbar->addWidget(clearButton);
         toolbar->addWidget(mirrorButton);
@@ -1223,19 +2629,6 @@ private:
         editorContent->addWidget(buildFumenControlsPanel(panel), 0);
         editorLayout->addLayout(editorContent, 1);
 
-        auto *fumenLabel = new QLabel("Fumen Code", panel);
-        fumenEdit_ = new QPlainTextEdit(panel);
-        fumenEdit_->setPlaceholderText("Paste or select a fumen code. Presets decode directly onto the board.");
-        fumenEdit_->setMaximumHeight(76);
-        editorLayout->addWidget(fumenLabel);
-        editorLayout->addWidget(fumenEdit_);
-
-        generatedField_ = new QPlainTextEdit(panel);
-        generatedField_->setReadOnly(true);
-        generatedField_->setMaximumHeight(120);
-        editorLayout->addWidget(new QLabel("Generated sfinder Field", panel));
-        editorLayout->addWidget(generatedField_);
-
         centerStack_->addWidget(editorPage);
         centerStack_->addWidget(buildPlayPage(centerStack_));
         centerStack_->addWidget(buildCenterOutputPage(centerStack_));
@@ -1244,13 +2637,42 @@ private:
 
         connect(sectionTabs_, &QTabBar::currentChanged, this, [this](int index) {
             centerStack_->setCurrentIndex(index);
+            runButton_->setVisible(index != 1);
+            cancelButton_->setVisible(index != 1);
+            screenshotButton_->setVisible(index == 0);
+            if (searchSettingsPanel_) {
+                searchSettingsPanel_->setVisible(index != 1);
+            }
+            if (playSettingsPanel_) {
+                playSettingsPanel_->setVisible(index == 1);
+            }
             if (index == 1) {
                 playBoard_->setFocus();
-            } else if (index == 2) {
-                refreshGeneratedFiles();
-            } else if (index == 3) {
-                refreshPreviewCodes();
+                schedulePCScout(true);
+            } else {
+                heldPlayInputs_.clear();
+                if (index == 0) {
+                    synchronizePlayFumenEditor();
+                } else if (index == 2) {
+                    refreshGeneratedFiles();
+                } else if (index == 3) {
+                    refreshPreviewCodes();
+                }
             }
+            updatePlayTimerState();
+        });
+
+        connect(screenshotButton_, &QPushButton::clicked, this, [this]() {
+            const bool imported = importBoardScreenshot();
+            if (imported && sectionTabs_ && sectionTabs_->currentIndex() == 1) {
+                loadEditorBoardIntoPlay();
+            }
+        });
+        connect(runButton_, &QPushButton::clicked, this, [this]() {
+            runSearch();
+        });
+        connect(cancelButton_, &QPushButton::clicked, this, [this]() {
+            cancelSearch();
         });
 
         connect(clearButton, &QPushButton::clicked, this, [this]() {
@@ -1258,9 +2680,6 @@ private:
         });
         connect(mirrorButton, &QPushButton::clicked, this, [this]() {
             mirrorCurrentPage();
-        });
-        connect(fumenEdit_, &QPlainTextEdit::textChanged, this, [this]() {
-            loadFumenCodeFromText();
         });
         return panel;
     }
@@ -1372,81 +2791,389 @@ private:
     }
 
     QWidget *buildPlayPage(QWidget *parent) {
-        auto *page = new QWidget(parent);
-        auto *layout = new QHBoxLayout(page);
+        auto *scroll = new QScrollArea(parent);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        auto *page = new QWidget(scroll);
+        page->setMinimumWidth(560);
+        auto *layout = new QVBoxLayout(page);
         layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(12);
+        layout->setSpacing(14);
 
-        playBoard_ = new BoardWidget(page);
+        auto *stage = new QWidget(page);
+        auto *stageLayout = new QHBoxLayout(stage);
+        stageLayout->setContentsMargins(0, 0, 0, 0);
+        stageLayout->setSpacing(8);
+        stageLayout->addStretch(1);
+
+        auto *holdColumn = new QWidget(page);
+        holdColumn->setFixedWidth(64);
+        auto *holdLayout = new QVBoxLayout(holdColumn);
+        holdLayout->setContentsMargins(0, 0, 0, 0);
+        holdLayout->addWidget(new QLabel("Hold", holdColumn), 0, Qt::AlignHCenter);
+        playHoldPreview_ = new PiecePreviewWidget(holdColumn);
+        holdLayout->addWidget(playHoldPreview_, 0, Qt::AlignTop | Qt::AlignHCenter);
+        holdLayout->addStretch(1);
+        stageLayout->addWidget(holdColumn, 0);
+
+        auto *boardColumn = new QWidget(page);
+        boardColumn->setMinimumWidth(260);
+        boardColumn->setMaximumWidth(420);
+        auto *boardLayout = new QVBoxLayout(boardColumn);
+        boardLayout->setContentsMargins(0, 0, 0, 0);
+        boardLayout->setSpacing(8);
+        playBoard_ = new BoardWidget(boardColumn);
+        playBoard_->setMaximumSize(400, 800);
         playBoard_->onCellPressed = [](int) { return true; };
-        playBoard_->onKeyPressed = [this](int key) { handlePlayKey(key); };
-        layout->addWidget(playBoard_, 1);
+        playBoard_->onKeyPressed = [this](int key, Qt::KeyboardModifiers modifiers) {
+            handlePlayKeyPressed(key, modifiers);
+        };
+        playBoard_->onKeyReleased = [this](int key, Qt::KeyboardModifiers modifiers) {
+            handlePlayKeyReleased(key, modifiers);
+        };
+        boardLayout->addWidget(playBoard_, 1, Qt::AlignHCenter);
+
+        auto *boardActions = new QGridLayout();
+        boardActions->setSpacing(6);
+        auto *loadButton = new QPushButton("Load", boardColumn);
+        auto *shotButton = new QPushButton("Screenshot", boardColumn);
+        auto *sendButton = new QPushButton("Export", boardColumn);
+        auto *newButton = new QPushButton("New", boardColumn);
+        playUndoButton_ = new QPushButton("Undo", boardColumn);
+        auto *focusButton = new QPushButton("Focus", boardColumn);
+        const std::array<QPushButton *, 6> boardButtons = {
+            loadButton, shotButton, sendButton, newButton, playUndoButton_, focusButton
+        };
+        for (int index = 0; index < static_cast<int>(boardButtons.size()); ++index) {
+            auto *button = boardButtons[index];
+            button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+            boardActions->addWidget(button, index / 2, index % 2);
+        }
+        boardLayout->addLayout(boardActions);
+
+        auto *pcScoutGroup = new QGroupBox("PC Scout  |  Uses extra CPU and may cause lag", boardColumn);
+        auto *pcScoutLayout = new QVBoxLayout(pcScoutGroup);
+        auto *pcScoutSourceRow = new QHBoxLayout();
+        playPCEnabledCheck_ = new QCheckBox("Enabled", pcScoutGroup);
+        playPCSourceBox_ = new QComboBox(pcScoutGroup);
+        playPCSourceBox_->addItem("Active queue", "active");
+        playPCSourceBox_->addItem("Random bag", "random");
+        pcScoutSourceRow->addWidget(playPCEnabledCheck_);
+        pcScoutSourceRow->addStretch(1);
+        pcScoutSourceRow->addWidget(playPCSourceBox_);
+        pcScoutLayout->addLayout(pcScoutSourceRow);
+        auto *pcScoutActions = new QHBoxLayout();
+        playPCDropBox_ = new QComboBox(pcScoutGroup);
+        playPCDropBox_->addItem("Hard drop", "harddrop");
+        playPCDropBox_->addItem("Soft drop", "softdrop");
+        playPCDropBox_->setCurrentIndex(1);
+        playPCShowSolutionButton_ = new QPushButton("Show Solution", pcScoutGroup);
+        playPCShowSolutionButton_->setObjectName("primaryButton");
+        playPCShowSolutionButton_->setEnabled(false);
+        playPCCancelButton_ = new QPushButton("Cancel", pcScoutGroup);
+        playPCCancelButton_->setEnabled(false);
+        pcScoutActions->addWidget(playPCDropBox_, 1);
+        pcScoutActions->addWidget(playPCShowSolutionButton_);
+        pcScoutActions->addWidget(playPCCancelButton_);
+        pcScoutLayout->addLayout(pcScoutActions);
+        playPCResultsLabel_ = new QLabel(pcScoutGroup);
+        playPCResultsLabel_->setWordWrap(true);
+        playPCResultsLabel_->setTextFormat(Qt::RichText);
+        pcScoutLayout->addWidget(playPCResultsLabel_);
+        playPCStatusLabel_ = new QLabel("PC Scout is off", pcScoutGroup);
+        playPCStatusLabel_->setWordWrap(true);
+        playPCStatusLabel_->setObjectName("paneSubtitle");
+        pcScoutLayout->addWidget(playPCStatusLabel_);
+        pcScoutGroup->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+        auto *spinScoutPage = new QWidget(page);
+        auto *spinScoutLayout = new QVBoxLayout(spinScoutPage);
+        spinScoutLayout->setContentsMargins(10, 10, 10, 10);
+        auto *spinScoutControls = new QHBoxLayout();
+        playSpinScoutLinesBox_ = new QComboBox(spinScoutPage);
+        playSpinScoutLinesBox_->addItem("T-Spin Single", 1);
+        playSpinScoutLinesBox_->addItem("T-Spin Double", 2);
+        playSpinScoutLinesBox_->addItem("T-Spin Triple", 3);
+        playSpinScoutLinesBox_->setCurrentIndex(1);
+        playSpinScoutPiecesSpin_ = new QSpinBox(spinScoutPage);
+        playSpinScoutPiecesSpin_->setRange(2, 7);
+        playSpinScoutPiecesSpin_->setValue(6);
+        playSpinScoutPiecesSpin_->setPrefix("Depth ");
+        playSpinScoutAutoCheck_ = new QCheckBox("Automatic", spinScoutPage);
+        playSpinScoutButton_ = new QPushButton("Scout", spinScoutPage);
+        playSpinScoutButton_->setObjectName("primaryButton");
+        playSpinScoutCancelButton_ = new QPushButton("Cancel", spinScoutPage);
+        playSpinScoutCancelButton_->setEnabled(false);
+        playSpinScoutPreviewButton_ = new QPushButton("Show Preview", spinScoutPage);
+        playSpinScoutPreviewButton_->setEnabled(false);
+        spinScoutControls->addWidget(playSpinScoutLinesBox_, 1);
+        spinScoutControls->addWidget(playSpinScoutPiecesSpin_);
+        spinScoutControls->addWidget(playSpinScoutAutoCheck_);
+        spinScoutControls->addWidget(playSpinScoutButton_);
+        spinScoutControls->addWidget(playSpinScoutCancelButton_);
+        spinScoutLayout->addLayout(spinScoutControls);
+        playSpinScoutResultLabel_ = new QLabel(spinScoutPage);
+        playSpinScoutResultLabel_->setWordWrap(true);
+        spinScoutLayout->addWidget(playSpinScoutResultLabel_);
+        auto *spinScoutBottom = new QHBoxLayout();
+        playSpinScoutStatusLabel_ = new QLabel(
+            "Uses the live field and exact active queue. Roof search is disabled for speed.",
+            spinScoutPage);
+        playSpinScoutStatusLabel_->setWordWrap(true);
+        playSpinScoutStatusLabel_->setObjectName("paneSubtitle");
+        spinScoutBottom->addWidget(playSpinScoutStatusLabel_, 1);
+        spinScoutBottom->addWidget(playSpinScoutPreviewButton_);
+        spinScoutLayout->addLayout(spinScoutBottom);
+
+        auto *renScoutPage = new QWidget(page);
+        auto *renScoutLayout = new QVBoxLayout(renScoutPage);
+        renScoutLayout->setContentsMargins(10, 10, 10, 10);
+        auto *renScoutControls = new QHBoxLayout();
+        playRenScoutPiecesSpin_ = new QSpinBox(renScoutPage);
+        playRenScoutPiecesSpin_->setRange(2, 7);
+        playRenScoutPiecesSpin_->setValue(7);
+        playRenScoutPiecesSpin_->setPrefix("Depth ");
+        playRenScoutDropBox_ = new QComboBox(renScoutPage);
+        playRenScoutDropBox_->addItem("Hard drop", "hard");
+        playRenScoutDropBox_->addItem("Soft drop", "soft");
+        playRenScoutDropBox_->setCurrentIndex(1);
+        playRenScoutAutoCheck_ = new QCheckBox("Automatic", renScoutPage);
+        playRenScoutButton_ = new QPushButton("Scout", renScoutPage);
+        playRenScoutButton_->setObjectName("primaryButton");
+        playRenScoutCancelButton_ = new QPushButton("Cancel", renScoutPage);
+        playRenScoutCancelButton_->setEnabled(false);
+        playRenScoutPreviewButton_ = new QPushButton("Show Preview", renScoutPage);
+        playRenScoutPreviewButton_->setEnabled(false);
+        renScoutControls->addWidget(playRenScoutDropBox_, 1);
+        renScoutControls->addWidget(playRenScoutPiecesSpin_);
+        renScoutControls->addWidget(playRenScoutAutoCheck_);
+        renScoutControls->addWidget(playRenScoutButton_);
+        renScoutControls->addWidget(playRenScoutCancelButton_);
+        renScoutLayout->addLayout(renScoutControls);
+        playRenScoutResultLabel_ = new QLabel(renScoutPage);
+        playRenScoutResultLabel_->setWordWrap(true);
+        renScoutLayout->addWidget(playRenScoutResultLabel_);
+        auto *renScoutBottom = new QHBoxLayout();
+        playRenScoutStatusLabel_ = new QLabel(
+            "Finds the longest available combo using the live field and active queue.",
+            renScoutPage);
+        playRenScoutStatusLabel_->setWordWrap(true);
+        playRenScoutStatusLabel_->setObjectName("paneSubtitle");
+        renScoutBottom->addWidget(playRenScoutStatusLabel_, 1);
+        renScoutBottom->addWidget(playRenScoutPreviewButton_);
+        renScoutLayout->addLayout(renScoutBottom);
+
+        playScoutTabs_ = new QTabWidget(page);
+        playScoutTabs_->addTab(pcScoutGroup, "Perfect Clear");
+        playScoutTabs_->addTab(spinScoutPage, "Spin");
+        playScoutTabs_->addTab(renScoutPage, "REN");
+        playScoutTabs_->setMinimumWidth(540);
+        playScoutTabs_->setMaximumWidth(900);
+        playScoutTabs_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        stageLayout->addWidget(boardColumn, 0);
+
+        auto *nextColumn = new QWidget(page);
+        nextColumn->setFixedWidth(64);
+        auto *nextLayout = new QVBoxLayout(nextColumn);
+        nextLayout->setContentsMargins(0, 0, 0, 0);
+        nextLayout->addWidget(new QLabel("Next", nextColumn), 0, Qt::AlignHCenter);
+        for (auto &preview : playNextPreviews_) {
+            preview = new PiecePreviewWidget(nextColumn);
+            nextLayout->addWidget(preview, 0, Qt::AlignHCenter);
+        }
+        nextLayout->addStretch(1);
+        stageLayout->addWidget(nextColumn, 0);
 
         auto *side = new QWidget(page);
-        side->setMinimumWidth(240);
-        side->setMaximumWidth(300);
+        side->setMinimumWidth(190);
+        side->setMaximumWidth(240);
         auto *sideLayout = new QVBoxLayout(side);
         sideLayout->setContentsMargins(0, 0, 0, 0);
         sideLayout->setSpacing(10);
-
-        auto *queueGroup = new QGroupBox("Play", side);
-        auto *queueLayout = new QVBoxLayout(queueGroup);
-        playStatusLabel_ = new QLabel("Load the editor board or start a new game.", queueGroup);
-        playStatusLabel_->setWordWrap(true);
-        playQueueLabel_ = new QLabel("Queue: -", queueGroup);
-        playQueueLabel_->setWordWrap(true);
-        playQueueEdit_ = new QLineEdit(queueGroup);
-        playQueueEdit_->setPlaceholderText("Queue, e.g. TILJSZO");
-        queueLayout->addWidget(playStatusLabel_);
-        queueLayout->addWidget(playQueueLabel_);
-        queueLayout->addWidget(playQueueEdit_);
-        auto *queueButtons = new QHBoxLayout();
-        auto *applyQueueButton = new QPushButton("Apply", queueGroup);
-        auto *randomQueueButton = new QPushButton("Random", queueGroup);
-        queueButtons->addWidget(applyQueueButton);
-        queueButtons->addWidget(randomQueueButton);
-        queueLayout->addLayout(queueButtons);
-        sideLayout->addWidget(queueGroup);
 
         auto *moveGroup = new QGroupBox("Moves", side);
         auto *moveGrid = new QGridLayout(moveGroup);
         auto *leftButton = new QPushButton("Left", moveGroup);
         auto *rightButton = new QPushButton("Right", moveGroup);
-        auto *downButton = new QPushButton("Soft", moveGroup);
+        auto *softButton = new QPushButton("Soft", moveGroup);
         auto *cwButton = new QPushButton("CW", moveGroup);
         auto *ccwButton = new QPushButton("CCW", moveGroup);
+        auto *rotate180Button = new QPushButton("180", moveGroup);
+        auto *holdButton = new QPushButton("Hold", moveGroup);
         auto *hardButton = new QPushButton("Hard Drop", moveGroup);
-        auto *loadButton = new QPushButton("Load Editor", moveGroup);
-        auto *newButton = new QPushButton("New", moveGroup);
         moveGrid->addWidget(leftButton, 0, 0);
         moveGrid->addWidget(rightButton, 0, 1);
-        moveGrid->addWidget(downButton, 0, 2);
+        moveGrid->addWidget(softButton, 0, 2);
         moveGrid->addWidget(cwButton, 1, 0);
         moveGrid->addWidget(ccwButton, 1, 1);
-        moveGrid->addWidget(hardButton, 1, 2);
-        moveGrid->addWidget(loadButton, 2, 0, 1, 2);
-        moveGrid->addWidget(newButton, 2, 2);
+        moveGrid->addWidget(rotate180Button, 1, 2);
+        moveGrid->addWidget(holdButton, 2, 0);
+        moveGrid->addWidget(hardButton, 2, 1, 1, 2);
         sideLayout->addWidget(moveGroup);
+
+        auto *statsGroup = new QGroupBox("Stats", side);
+        auto *statsLayout = new QVBoxLayout(statsGroup);
+        playPiecesLabel_ = new QLabel("Pieces: 0", statsGroup);
+        playLinesLabel_ = new QLabel("Lines: 0", statsGroup);
+        playLevelLabel_ = new QLabel("Level: 1", statsGroup);
+        playPpsLabel_ = new QLabel("PPS: 0.00", statsGroup);
+        playClearLabel_ = new QLabel(statsGroup);
+        playClearLabel_->setStyleSheet("font-weight: 650;");
+        playDetectionLabel_ = new QLabel(statsGroup);
+        playDetectionLabel_->setWordWrap(true);
+        playDetectionLabel_->setStyleSheet("font-size: 15px; font-weight: 650;");
+        playStatusLabel_ = new QLabel(statsGroup);
+        playStatusLabel_->setWordWrap(true);
+        playStatusLabel_->setObjectName("paneSubtitle");
+        statsLayout->addWidget(playPiecesLabel_);
+        statsLayout->addWidget(playLinesLabel_);
+        statsLayout->addWidget(playLevelLabel_);
+        statsLayout->addWidget(playClearLabel_);
+        statsLayout->addWidget(playPpsLabel_);
+        statsLayout->addWidget(playDetectionLabel_);
+        statsLayout->addWidget(playStatusLabel_);
+        sideLayout->addWidget(statsGroup);
         sideLayout->addStretch(1);
-        layout->addWidget(side, 0);
+        stageLayout->addWidget(side, 0);
+        stageLayout->addStretch(1);
+        layout->addWidget(stage, 0, Qt::AlignTop);
+        layout->addWidget(playScoutTabs_, 0, Qt::AlignTop | Qt::AlignHCenter);
+        layout->addStretch(1);
 
-        connect(applyQueueButton, &QPushButton::clicked, this, [this]() {
-            setPlayQueueFromText(playQueueEdit_->text());
-        });
-        connect(randomQueueButton, &QPushButton::clicked, this, [this]() {
-            randomizePlayQueue();
-        });
-        connect(leftButton, &QPushButton::clicked, this, [this]() { movePlayPiece(-1, 0); });
-        connect(rightButton, &QPushButton::clicked, this, [this]() { movePlayPiece(1, 0); });
-        connect(downButton, &QPushButton::clicked, this, [this]() { movePlayPiece(0, 1); });
-        connect(cwButton, &QPushButton::clicked, this, [this]() { rotatePlayPiece(1); });
-        connect(ccwButton, &QPushButton::clicked, this, [this]() { rotatePlayPiece(-1); });
-        connect(hardButton, &QPushButton::clicked, this, [this]() { hardDropPlayPiece(); });
+        connect(leftButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_LEFT); });
+        connect(rightButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_RIGHT); });
+        connect(softButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_SOFT_DROP); });
+        connect(cwButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_ROTATE_CW); });
+        connect(ccwButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_ROTATE_CCW); });
+        connect(rotate180Button, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_ROTATE_180); });
+        connect(holdButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_HOLD); });
+        connect(hardButton, &QPushButton::clicked, this, [this]() { runPlayCommand(SFT_CMD_HARD_DROP); });
         connect(loadButton, &QPushButton::clicked, this, [this]() { loadEditorBoardIntoPlay(); });
-        connect(newButton, &QPushButton::clicked, this, [this]() { newPlayGame(); });
+        connect(shotButton, &QPushButton::clicked, this, [this]() {
+            if (importBoardScreenshot()) {
+                loadEditorBoardIntoPlay();
+            }
+        });
+        connect(sendButton, &QPushButton::clicked, this, [this]() { exportPlayBoardToEditor(true); });
+        connect(newButton, &QPushButton::clicked, this, [this]() { resetPlayGame(); });
+        connect(playUndoButton_, &QPushButton::clicked, this, [this]() { undoPlayPlacement(); });
+        connect(focusButton, &QPushButton::clicked, this, [this]() { playBoard_->setFocus(); });
+        connect(playPCShowSolutionButton_, &QPushButton::clicked, this, [this]() {
+            togglePCScoutSolution();
+        });
+        connect(playPCCancelButton_, &QPushButton::clicked, this, [this]() { cancelPCScout(); });
+        connect(playSpinScoutButton_, &QPushButton::clicked, this, [this]() {
+            runAuxiliaryScout("spin");
+        });
+        connect(playRenScoutButton_, &QPushButton::clicked, this, [this]() {
+            runAuxiliaryScout("ren");
+        });
+        connect(playSpinScoutCancelButton_, &QPushButton::clicked, this, [this]() {
+            cancelAuxiliaryScout();
+        });
+        connect(playRenScoutCancelButton_, &QPushButton::clicked, this, [this]() {
+            cancelAuxiliaryScout();
+        });
+        connect(playSpinScoutPreviewButton_, &QPushButton::clicked, this, [this]() {
+            previewAuxiliaryScoutResult("spin");
+        });
+        connect(playRenScoutPreviewButton_, &QPushButton::clicked, this, [this]() {
+            previewAuxiliaryScoutResult("ren");
+        });
+        connect(playSpinScoutAutoCheck_, &QCheckBox::toggled, this, [this](bool enabled) {
+            QSettings settings;
+            settings.setValue("play/spinScout/automatic", enabled);
+            if (!enabled && auxiliaryScoutAutomaticRun_ && auxiliaryScoutMode_ == "spin") {
+                cancelAuxiliaryScout();
+            }
+            scheduleAuxiliaryScouts(true);
+        });
+        connect(playRenScoutAutoCheck_, &QCheckBox::toggled, this, [this](bool enabled) {
+            QSettings settings;
+            settings.setValue("play/renScout/automatic", enabled);
+            if (!enabled && auxiliaryScoutAutomaticRun_ && auxiliaryScoutMode_ == "ren") {
+                cancelAuxiliaryScout();
+            }
+            scheduleAuxiliaryScouts(true);
+        });
+        connect(playSpinScoutLinesBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            scheduleAuxiliaryScouts(true);
+        });
+        connect(playSpinScoutPiecesSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this]() {
+            scheduleAuxiliaryScouts(true);
+        });
+        connect(playRenScoutDropBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            scheduleAuxiliaryScouts(true);
+        });
+        connect(playRenScoutPiecesSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this]() {
+            scheduleAuxiliaryScouts(true);
+        });
+        connect(playPCEnabledCheck_, &QCheckBox::toggled, this, [this](bool enabled) {
+            QSettings settings;
+            settings.setValue("play/pcScout/enabled", enabled);
+            if (enabled) {
+                schedulePCScout(true);
+            } else {
+                invalidatePCScout("PC Scout is off");
+            }
+            updatePCScoutControls();
+        });
+        connect(playPCSourceBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            QSettings settings;
+            settings.setValue("play/pcScout/source", playPCSourceBox_->currentData().toString());
+            schedulePCScout(true);
+        });
+        connect(playPCDropBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+            QSettings settings;
+            settings.setValue("play/pcScout/drop", playPCDropBox_->currentData().toString());
+            schedulePCScout(true);
+        });
+        {
+            QSettings settings;
+            playPCEnabledCheck_->setChecked(settings.value("play/pcScout/enabled", false).toBool());
+            const QString storedSource = settings.value("play/pcScout/source", "active").toString();
+            const int sourceIndex = playPCSourceBox_->findData(storedSource);
+            playPCSourceBox_->setCurrentIndex(sourceIndex >= 0 ? sourceIndex : 0);
+            const QString storedDrop = settings.value("play/pcScout/drop", "softdrop").toString();
+            const int storedIndex = playPCDropBox_->findData(storedDrop);
+            playPCDropBox_->setCurrentIndex(storedIndex >= 0 ? storedIndex : 1);
+            playSpinScoutAutoCheck_->setChecked(
+                settings.value("play/spinScout/automatic", false).toBool());
+            playRenScoutAutoCheck_->setChecked(
+                settings.value("play/renScout/automatic", false).toBool());
+        }
+        pcScoutRefreshTimer_ = new QTimer(page);
+        pcScoutRefreshTimer_->setSingleShot(true);
+        connect(pcScoutRefreshTimer_, &QTimer::timeout, this, [this]() { runPCScout(); });
+        auxiliaryScoutRefreshTimer_ = new QTimer(page);
+        auxiliaryScoutRefreshTimer_->setSingleShot(true);
+        connect(auxiliaryScoutRefreshTimer_, &QTimer::timeout, this, [this]() {
+            runScheduledAuxiliaryScout();
+        });
+        updatePCScoutControls();
+        scheduleAuxiliaryScouts();
 
-        newPlayGame();
-        return page;
+        playTimer_ = new QTimer(page);
+        playTimer_->setTimerType(Qt::PreciseTimer);
+        playTimer_->setInterval(16);
+        connect(playTimer_, &QTimer::timeout, this, [this]() { advancePlayFrame(); });
+        playInputClock_.start();
+        playInputTimer_ = new QTimer(page);
+        playInputTimer_->setSingleShot(true);
+        playInputTimer_->setTimerType(Qt::PreciseTimer);
+        connect(playInputTimer_, &QTimer::timeout, this, [this]() {
+            processPlayInputDeadlines();
+        });
+        playFumenSyncTimer_ = new QTimer(page);
+        playFumenSyncTimer_->setSingleShot(true);
+        connect(playFumenSyncTimer_, &QTimer::timeout, this, [this]() {
+            updateFumenCodeFromPages();
+        });
+
+        scroll->setWidget(page);
+        updatePiecePreviewSizes();
+        initializePlayGame();
+        return scroll;
     }
 
     QWidget *buildCenterOutputPage(QWidget *parent) {
@@ -1550,7 +3277,7 @@ private:
 
     QWidget *buildOutputPanel() {
         auto *panel = new QWidget(this);
-        panel->setMinimumWidth(320);
+        panel->setMinimumWidth(260);
         auto *layout = new QVBoxLayout(panel);
         layout->setContentsMargins(14, 14, 14, 14);
         layout->setSpacing(12);
@@ -2090,11 +3817,6 @@ private:
 
     QString encodeFumenPages() {
         ensureFumenState();
-        QString output = "v115@";
-        const QString table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::array<int, kFumenBlocks> previous{};
-        previous.fill(0);
-
         std::vector<std::array<int, kFumenBlocks>> pages = fumenPages_;
         if (currentFumenPage_ >= 0 && currentFumenPage_ < static_cast<int>(pages.size()) &&
             placeMinoCheck_ && placeMinoCheck_->isChecked() && currentOperation_.type > 0) {
@@ -2104,41 +3826,7 @@ private:
                 }
             }
         }
-
-        for (int pageIndex = 0; pageIndex < static_cast<int>(pages.size()); ++pageIndex) {
-            std::array<int, kFumenBlocks> page = pages[pageIndex];
-            for (int index = 230; index < kFumenBlocks; ++index) {
-                page[index] = 0;
-            }
-            int index = 0;
-            while (index < kFumenBlocks) {
-                const int diff = qBound(-8, page[index] - previous[index], 8);
-                int run = 0;
-                while (index + run + 1 < kFumenBlocks &&
-                       run + 1 < kFumenBlocks &&
-                       qBound(-8, page[index + run + 1] - previous[index + run + 1], 8) == diff) {
-                    ++run;
-                }
-                const int value = (diff + 8) * kFumenBlocks + run;
-                output += table[value % 64];
-                output += table[(value / 64) % 64];
-                index += run + 1;
-            }
-
-            previous = page;
-            const int action = 0
-                               + 0 * 8
-                               + 0 * 8 * 4
-                               + 0 * 8 * 4 * kFumenBlocks
-                               + 0 * 8 * 4 * kFumenBlocks * 2
-                               + (pageIndex == 0 ? 1 : 0) * 8 * 4 * kFumenBlocks * 4
-                               + 0 * 8 * 4 * kFumenBlocks * 8
-                               + 1 * 8 * 4 * kFumenBlocks * 16;
-            output += table[action % 64];
-            output += table[(action / 64) % 64];
-            output += table[(action / 4096) % 64];
-        }
-        return output;
+        return encodeFumenFields(pages);
     }
 
     void updateFumenCodeFromPages() {
@@ -2676,206 +4364,916 @@ pre, code {
         }
     }
 
-    QString pieceName(int type) const {
-        return cellName(type);
-    }
-
-    std::vector<int> playPieceCells(const PlayPiece &piece) const {
-        std::vector<int> cells;
-        if (piece.type <= 0 || piece.type >= 8) {
-            return cells;
+    void updatePlayBoard() {
+        if (!playBoard_) {
+            return;
         }
-        const auto &offsets = fumenPieceOffsets()[piece.type][piece.rotation % 4];
-        for (const QPoint &offset : offsets) {
-            const int x = piece.x + offset.x() - 1;
-            const int y = piece.y + offset.y() - 1;
-            if (0 <= x && x < kColumns && 0 <= y && y < kRows) {
-                cells.push_back(y * kColumns + x);
+        ++playRenderSerial_;
+        std::array<int, kColumns * kRows> visible{};
+        std::array<int, kColumns * kRows> ghosts{};
+        visible.fill(0);
+        ghosts.fill(0);
+        std::array<int, SFT_GAME_WIDTH * SFT_GAME_HEIGHT> rendered{};
+        std::array<int, SFT_GAME_WIDTH * SFT_GAME_HEIGHT> renderedGhosts{};
+        sft_game_write_render_cells(&playGame_, rendered.data(), renderedGhosts.data());
+        for (int row = 0; row < kRows; ++row) {
+            const int gameY = kRows - 1 - row;
+            for (int col = 0; col < kColumns; ++col) {
+                const int index = row * kColumns + col;
+                const int renderIndex = gameY * SFT_GAME_WIDTH + col;
+                visible[index] = rendered[renderIndex];
+                ghosts[index] = renderedGhosts[renderIndex];
             }
         }
-        return cells;
+        playBoard_->setRenderCells(visible, ghosts);
+        if (playHoldPreview_) {
+            playHoldPreview_->setPiece(playGame_.hold);
+        }
+        for (int i = 0; i < static_cast<int>(playNextPreviews_.size()); ++i) {
+            if (playNextPreviews_[i]) {
+                playNextPreviews_[i]->setPiece(sft_game_queue_piece(&playGame_, i));
+            }
+        }
+        updatePlayStats();
     }
 
-    bool playPieceCollides(const PlayPiece &piece) const {
-        if (piece.type <= 0) {
+    bool playVisualStateChanged(const SFTGameState &before, const SFTGameState &after) const {
+        return before.current != after.current
+            || before.hold != after.hold
+            || before.rotation != after.rotation
+            || before.x != after.x
+            || before.y != after.y
+            || before.queue_index != after.queue_index
+            || before.queue_count != after.queue_count
+            || before.custom_queue_enabled != after.custom_queue_enabled
+            || before.game_over != after.game_over
+            || before.pieces_locked != after.pieces_locked
+            || before.lines_cleared != after.lines_cleared
+            || before.gravity_level != after.gravity_level
+            || before.last_clear_lines != after.last_clear_lines
+            || before.last_clear_t_spin != after.last_clear_t_spin
+            || before.last_clear_t_spin_mini != after.last_clear_t_spin_mini
+            || std::memcmp(before.board, after.board, sizeof(before.board)) != 0
+            || std::memcmp(before.queue, after.queue, sizeof(before.queue)) != 0;
+    }
+
+    unsigned int randomPlaySeed() const {
+        unsigned int seed = QRandomGenerator::global()->generate();
+        return seed == 0 ? 1u : seed;
+    }
+
+    void initializePlayGame() {
+        sft_game_init_seeded(&playGame_, randomPlaySeed());
+        applyPlayTuning();
+        applyPlayQueueAndHold(false);
+        heldPlayInputs_.clear();
+        playUndoStack_.clear();
+        playHasStarted_ = false;
+        playLastExportedPieces_ = playGame_.pieces_locked;
+        playStatsClock_.invalidate();
+        updatePlayTimerState();
+        invalidatePCScout(
+            playPCEnabledCheck_ && playPCEnabledCheck_->isChecked()
+                ? "Ready to check the active queue"
+                : "PC Scout is off");
+        updatePlayBoard();
+    }
+
+    void resetPlayGame() {
+        invalidatePCScout();
+        invalidateAuxiliaryScout();
+        sft_game_reset_seeded(&playGame_, randomPlaySeed());
+        applyPlayTuning();
+        applyPlayQueueAndHold(false);
+        heldPlayInputs_.clear();
+        playUndoStack_.clear();
+        playHasStarted_ = false;
+        playLastExportedPieces_ = playGame_.pieces_locked;
+        playStatsClock_.invalidate();
+        updatePlayTimerState();
+        if (playStatusLabel_) {
+            playStatusLabel_->clear();
+        }
+        updatePlayBoard();
+        schedulePCScout();
+        if (playBoard_) {
+            playBoard_->setFocus();
+        }
+    }
+
+    void applyPlayTuning() {
+        if (!playGravityLevelBox_ || !playLockSpin_) {
+            return;
+        }
+        sft_game_set_gravity_level(&playGame_, playConfiguredGravityLevel_);
+        sft_game_set_level_progression(&playGame_,
+                                       playLevelProgressionCheck_ && playLevelProgressionCheck_->isChecked());
+        const bool usesProgressedLockDelay = playGame_.level_progression_enabled
+            && playGame_.gravity_level >= 20
+            && playGame_.gravity_level > playGame_.gravity_base_level;
+        sft_game_set_lock_delay(&playGame_, usesProgressedLockDelay
+            ? sft_game_lock_delay_for_level(playGame_.gravity_level)
+            : playConfiguredLockDelay_);
+        const int lockResetMode = playStepResetCheck_ && playStepResetCheck_->isChecked()
+            ? SFT_LOCK_RESET_STEP
+            : (playMoveResetCheck_ && playMoveResetCheck_->isChecked() ? SFT_LOCK_RESET_MOVE : SFT_LOCK_RESET_NONE);
+        sft_game_set_lock_reset(&playGame_, lockResetMode,
+                                playMoveResetLimitSpin_ ? playMoveResetLimitSpin_->value() : 15);
+        sft_game_set_options(&playGame_,
+                             playGravityCheck_ && playGravityCheck_->isChecked(),
+                             playInfiniteLockCheck_ && playInfiniteLockCheck_->isChecked(),
+                             playInfiniteHoldCheck_ && playInfiniteHoldCheck_->isChecked());
+    }
+
+    void loadEditorBoardIntoPlay() {
+        invalidatePCScout();
+        invalidateAuxiliaryScout();
+        ensureFumenState();
+        saveCurrentFumenPage();
+        sft_game_init_seeded(&playGame_, randomPlaySeed());
+        sft_game_load_fumen_cells(&playGame_, fumenPages_[currentFumenPage_].data());
+        applyPlayTuning();
+        applyPlayQueueAndHold(false);
+        heldPlayInputs_.clear();
+        playUndoStack_.clear();
+        playHasStarted_ = false;
+        playLastExportedPieces_ = playGame_.pieces_locked;
+        playStatsClock_.invalidate();
+        updatePlayTimerState();
+        if (playStatusLabel_) {
+            playStatusLabel_->setText("Loaded editor board into play.");
+        }
+        updatePlayBoard();
+        playBoard_->setFocus();
+    }
+
+    void applyPlayQueueAndHold(bool resetStats = true) {
+        if (!playQueueEdit_ || !playHoldBox_) {
+            return;
+        }
+        std::vector<int> pieces;
+        for (QChar ch : playQueueEdit_->text()) {
+            const int piece = pieceTypeFromChar(ch);
+            if (piece > 0) {
+                pieces.push_back(piece);
+            }
+        }
+        if (pieces.empty()) {
+            sft_game_clear_custom_queue(&playGame_);
+        } else {
+            sft_game_set_custom_queue(&playGame_, pieces.data(), static_cast<int>(pieces.size()));
+        }
+        const int holdPiece = playHoldBox_->currentText() == "-"
+            ? 0
+            : pieceTypeFromChar(playHoldBox_->currentText().front());
+        sft_game_set_hold_piece(&playGame_, holdPiece);
+        applyPlayTuning();
+        heldPlayInputs_.clear();
+        playUndoStack_.clear();
+        playLastExportedPieces_ = playGame_.pieces_locked;
+        resetPlayOpeningDetection(playGame_.pieces_locked);
+        if (resetStats) {
+            playHasStarted_ = false;
+            playStatsClock_.invalidate();
+            updatePlayTimerState();
+        }
+        savePlaySettings();
+        updatePlayBoard();
+        invalidateAuxiliaryScout();
+        schedulePCScout();
+        if (playBoard_) {
+            playBoard_->setFocus();
+        }
+    }
+
+    void startPlayIfNeeded() {
+        if (playHasStarted_) {
+            return;
+        }
+        playHasStarted_ = true;
+        playStatsClock_.start();
+        updatePlayTimerState();
+        if (playStatusLabel_) {
+            playStatusLabel_->clear();
+        }
+    }
+
+    void updatePlayTimerState() {
+        if (!playTimer_) {
+            return;
+        }
+        const bool shouldRun = playHasStarted_
+            && sectionTabs_
+            && sectionTabs_->currentIndex() == 1
+            && !playGame_.game_over;
+        if (shouldRun) {
+            if (!playTimer_->isActive()) {
+                playFrameClock_.restart();
+                playTimer_->start();
+            }
+        } else {
+            playTimer_->stop();
+            playFrameClock_.invalidate();
+            if (playInputTimer_) {
+                playInputTimer_->stop();
+            }
+        }
+    }
+
+    void pushPlayUndo(const SFTGameState &state) {
+        PlayUndoSnapshot snapshot;
+        snapshot.game = state;
+        snapshot.openingCycleStartPieces = playOpeningCycleStartPieces_;
+        snapshot.openerDetectionDone = playOpenerDetectionDone_;
+        snapshot.variantDetectionDone = playVariantDetectionDone_;
+        snapshot.earlyVariantDetection = playEarlyVariantDetection_;
+        snapshot.detectedOpenerName = playDetectedOpenerName_;
+        snapshot.detectedOpenerMirrored = playDetectedOpenerMirrored_;
+        snapshot.detectionLabel = playDetectionLabel_ ? playDetectionLabel_->text() : QString();
+        playUndoStack_.push_back(snapshot);
+        if (playUndoStack_.size() > 50) {
+            playUndoStack_.erase(playUndoStack_.begin(), playUndoStack_.begin() + (playUndoStack_.size() - 50));
+        }
+        if (playUndoButton_) {
+            playUndoButton_->setEnabled(true);
+        }
+    }
+
+    void undoPlayPlacement() {
+        if (playUndoStack_.empty()) {
+            return;
+        }
+        invalidatePCScout();
+        invalidateAuxiliaryScout();
+        const PlayUndoSnapshot snapshot = playUndoStack_.back();
+        playUndoStack_.pop_back();
+        playGame_ = snapshot.game;
+        playOpeningCycleStartPieces_ = snapshot.openingCycleStartPieces;
+        playOpenerDetectionDone_ = snapshot.openerDetectionDone;
+        playVariantDetectionDone_ = snapshot.variantDetectionDone;
+        playEarlyVariantDetection_ = snapshot.earlyVariantDetection;
+        playDetectedOpenerName_ = snapshot.detectedOpenerName;
+        playDetectedOpenerMirrored_ = snapshot.detectedOpenerMirrored;
+        if (playDetectionLabel_) {
+            playDetectionLabel_->setText(snapshot.detectionLabel);
+        }
+        heldPlayInputs_.clear();
+        schedulePlayInputTimer();
+        playLastExportedPieces_ = playGame_.pieces_locked;
+        if (playUndoButton_) {
+            playUndoButton_->setEnabled(!playUndoStack_.empty());
+        }
+        exportPlayBoardToEditor(false, false);
+        updatePlayBoard();
+        schedulePCScout();
+        playBoard_->setFocus();
+    }
+
+    bool runPlayCommandInternal(int command, bool allowFollowup = true, bool renderNow = true) {
+        if (playGame_.game_over) {
             return false;
         }
-        const auto &offsets = fumenPieceOffsets()[piece.type][piece.rotation % 4];
-        for (const QPoint &offset : offsets) {
-            const int x = piece.x + offset.x() - 1;
-            const int y = piece.y + offset.y() - 1;
-            if (x < 0 || x >= kColumns || y >= kRows) {
-                return true;
+        if (command == SFT_CMD_SOFT_DROP && playSoftSpin_ && playSoftSpin_->value() == 0) {
+            const bool changed = sft_game_drop_to_surface(&playGame_) != 0;
+            if (changed && renderNow) {
+                updatePlayBoard();
             }
-            if (y >= 0 && playCells_[y * kColumns + x] != 0) {
+            return changed;
+        }
+
+        const SFTGameState before = playGame_;
+        const bool changed = sft_game_command(&playGame_, command) != 0;
+        if (!changed) {
+            return false;
+        }
+        if (playGame_.pieces_locked != before.pieces_locked) {
+            pushPlayUndo(before);
+            applyEntryMovementForHeldInputs();
+            exportPlayBoardIfPieceLocked();
+        } else if (command == SFT_CMD_HOLD) {
+            applyEntryMovementForHeldInputs();
+            invalidateAuxiliaryScout();
+            schedulePCScout();
+        } else if (allowFollowup && (command == SFT_CMD_ROTATE_CW || command == SFT_CMD_ROTATE_CCW || command == SFT_CMD_ROTATE_180)) {
+            applyEntryMovementForHeldInputs();
+        } else if (allowFollowup && (command == SFT_CMD_LEFT || command == SFT_CMD_RIGHT)) {
+            applyHeldSoftDropFollowup();
+        }
+        if (renderNow) {
+            updatePlayBoard();
+        }
+        return true;
+    }
+
+    void runPlayCommand(int command) {
+        applyPlayTuning();
+        startPlayIfNeeded();
+        runPlayCommandInternal(command);
+        schedulePlayInputTimer();
+        if (playBoard_) {
+            playBoard_->setFocus();
+        }
+    }
+
+    int keyForPlayBinding(const QString &binding) const {
+        const QString key = binding.trimmed().toLower();
+        if (key == "space") return Qt::Key_Space;
+        if (key == "left") return Qt::Key_Left;
+        if (key == "right") return Qt::Key_Right;
+        if (key == "up") return Qt::Key_Up;
+        if (key == "down") return Qt::Key_Down;
+        if (key.size() == 1) return key.front().toUpper().unicode();
+        return 0;
+    }
+
+    int commandForPlayKey(int key) const {
+        const std::array<int, 8> commands = {
+            SFT_CMD_LEFT, SFT_CMD_RIGHT, SFT_CMD_SOFT_DROP, SFT_CMD_HARD_DROP,
+            SFT_CMD_ROTATE_CW, SFT_CMD_ROTATE_CCW, SFT_CMD_ROTATE_180, SFT_CMD_HOLD
+        };
+        for (int i = 0; i < static_cast<int>(commands.size()); ++i) {
+            if (playControlEdits_[i] && keyForPlayBinding(playControlEdits_[i]->text()) == key) {
+                return commands[i];
+            }
+        }
+        return 0;
+    }
+
+    bool isRepeatablePlayInput(int command) const {
+        return isPlayHorizontal(command) || command == SFT_CMD_SOFT_DROP;
+    }
+
+    int playInputInitialDelay(int command) const {
+        return command == SFT_CMD_SOFT_DROP
+            ? (playSoftSpin_ ? playSoftSpin_->value() : 75)
+            : (playDasSpin_ ? playDasSpin_->value() : 130);
+    }
+
+    int playInputRepeatInterval(int command) const {
+        return command == SFT_CMD_SOFT_DROP
+            ? (playSoftSpin_ ? playSoftSpin_->value() : 75)
+            : (playArrSpin_ ? playArrSpin_->value() : 28);
+    }
+
+    qint64 playInputNow() {
+        if (!playInputClock_.isValid()) {
+            playInputClock_.start();
+        }
+        return playInputClock_.elapsed();
+    }
+
+    void handlePlayKeyPressed(int key, Qt::KeyboardModifiers modifiers) {
+        const bool undoShortcut = key == Qt::Key_Z && (modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::MetaModifier));
+        if (undoShortcut || (playControlEdits_[8] && keyForPlayBinding(playControlEdits_[8]->text()) == key)) {
+            undoPlayPlacement();
+            return;
+        }
+        if (playControlEdits_[9] && keyForPlayBinding(playControlEdits_[9]->text()) == key) {
+            resetPlayGame();
+            return;
+        }
+        const int command = commandForPlayKey(key);
+        if (command == 0 || heldPlayInputs_.contains(key)) {
+            return;
+        }
+        startPlayIfNeeded();
+        const qint64 pressedAt = playInputNow();
+        runPlayCommandInternal(command);
+        HeldPlayInput input;
+        input.command = command;
+        input.pressOrder = ++playInputPressCounter_;
+        input.pressedAtMs = pressedAt;
+        input.nextRepeatAtMs = input.pressedAtMs + playInputInitialDelay(command);
+        heldPlayInputs_.insert(key, input);
+        schedulePlayInputTimer();
+    }
+
+    void handlePlayKeyReleased(int key, Qt::KeyboardModifiers) {
+        heldPlayInputs_.remove(key);
+        schedulePlayInputTimer();
+    }
+
+    bool isPlayHorizontal(int command) const {
+        return command == SFT_CMD_LEFT || command == SFT_CMD_RIGHT;
+    }
+
+    bool horizontalInputIsBlocked(const HeldPlayInput &input) const {
+        if (!isPlayHorizontal(input.command)) {
+            return false;
+        }
+        for (auto it = heldPlayInputs_.cbegin(); it != heldPlayInputs_.cend(); ++it) {
+            if (isPlayHorizontal(it->command) && it->command != input.command && it->pressOrder > input.pressOrder) {
                 return true;
             }
         }
         return false;
     }
 
-    void updatePlayBoard() {
-        if (!playBoard_) {
-            return;
-        }
-        std::array<int, kColumns * kRows> visible = playCells_;
-        if (currentPlayPiece_.type > 0) {
-            for (int index : playPieceCells(currentPlayPiece_)) {
-                visible[index] = currentPlayPiece_.type;
-            }
-        }
-        playBoard_->setCells(visible);
-        if (playQueueLabel_) {
-            QString queueText;
-            for (int piece : playQueue_) {
-                queueText += pieceName(piece);
-            }
-            playQueueLabel_->setText(QString("Current: %1\nQueue: %2")
-                                         .arg(currentPlayPiece_.type > 0 ? pieceName(currentPlayPiece_.type) : "-",
-                                              queueText.isEmpty() ? "-" : queueText));
-        }
-    }
-
-    void setPlayQueueFromText(const QString &text) {
-        playQueue_.clear();
-        for (QChar ch : text) {
-            const int type = pieceTypeFromChar(ch);
-            if (type > 0) {
-                playQueue_.push_back(type);
-            }
-        }
-        if (currentPlayPiece_.type == 0) {
-            spawnNextPlayPiece();
-        }
-        updatePlayBoard();
-    }
-
-    void randomizePlayQueue() {
-        refillPlayQueue();
-        currentPlayPiece_ = PlayPiece();
-        spawnNextPlayPiece();
-        updatePlayBoard();
-    }
-
-    void refillPlayQueue() {
-        playQueue_ = {1, 2, 3, 4, 5, 6, 7};
-        std::shuffle(playQueue_.begin(), playQueue_.end(), rng_);
-    }
-
-    void newPlayGame() {
-        playCells_.fill(0);
-        randomizePlayQueue();
-        if (playStatusLabel_) {
-            playStatusLabel_->setText("Keyboard: arrows move, Z/X rotate, Space hard drops.");
-        }
-        updatePlayBoard();
-    }
-
-    void loadEditorBoardIntoPlay() {
-        playCells_ = board_ ? board_->cells() : std::array<int, kColumns * kRows>{};
-        currentPlayPiece_ = PlayPiece();
-        spawnNextPlayPiece();
-        if (playStatusLabel_) {
-            playStatusLabel_->setText("Loaded editor board into play.");
-        }
-        updatePlayBoard();
-    }
-
-    void spawnNextPlayPiece() {
-        if (playQueue_.empty()) {
-            refillPlayQueue();
-        }
-        if (playQueue_.empty()) {
-            currentPlayPiece_ = PlayPiece();
-            return;
-        }
-        currentPlayPiece_ = PlayPiece{playQueue_.front(), 0, 4, 1};
-        playQueue_.erase(playQueue_.begin());
-        if (playPieceCollides(currentPlayPiece_)) {
-            currentPlayPiece_ = PlayPiece();
-            if (playStatusLabel_) {
-                playStatusLabel_->setText("Game over. Click New to restart.");
-            }
-        }
-    }
-
-    void movePlayPiece(int dx, int dy) {
-        PlayPiece next = currentPlayPiece_;
-        next.x += dx;
-        next.y += dy;
-        if (!playPieceCollides(next)) {
-            currentPlayPiece_ = next;
-            updatePlayBoard();
-        }
-    }
-
-    void rotatePlayPiece(int delta) {
-        PlayPiece next = currentPlayPiece_;
-        next.rotation = (next.rotation + delta + 4) % 4;
-        if (!playPieceCollides(next)) {
-            currentPlayPiece_ = next;
-            updatePlayBoard();
-        }
-    }
-
-    void lockPlayPiece() {
-        for (int index : playPieceCells(currentPlayPiece_)) {
-            playCells_[index] = currentPlayPiece_.type;
-        }
-        std::array<int, kColumns * kRows> cleared{};
-        cleared.fill(0);
-        int writeRow = kRows - 1;
-        for (int row = kRows - 1; row >= 0; --row) {
-            bool full = true;
-            for (int col = 0; col < kColumns; ++col) {
-                if (playCells_[row * kColumns + col] == 0) {
-                    full = false;
-                    break;
-                }
-            }
-            if (!full) {
-                for (int col = 0; col < kColumns; ++col) {
-                    cleared[writeRow * kColumns + col] = playCells_[row * kColumns + col];
-                }
-                --writeRow;
-            }
-        }
-        playCells_ = cleared;
-        spawnNextPlayPiece();
-        updatePlayBoard();
-    }
-
-    void hardDropPlayPiece() {
-        if (currentPlayPiece_.type <= 0) {
-            return;
-        }
-        PlayPiece next = currentPlayPiece_;
-        while (true) {
-            PlayPiece lower = next;
-            lower.y += 1;
-            if (playPieceCollides(lower)) {
+    bool runPlayMovement(int command, int repeats) {
+        bool changedAny = false;
+        for (int i = 0; i < qMax(1, repeats); ++i) {
+            const int piecesBefore = playGame_.pieces_locked;
+            if (!runPlayCommandInternal(command, false, false)) {
                 break;
             }
-            next = lower;
+            changedAny = true;
+            if (playGame_.pieces_locked != piecesBefore) {
+                break;
+            }
         }
-        currentPlayPiece_ = next;
-        lockPlayPiece();
+        return changedAny;
     }
 
-    void handlePlayKey(int key) {
-        if (key == Qt::Key_Left) {
-            movePlayPiece(-1, 0);
-        } else if (key == Qt::Key_Right) {
-            movePlayPiece(1, 0);
-        } else if (key == Qt::Key_Down) {
-            movePlayPiece(0, 1);
-        } else if (key == Qt::Key_Space) {
-            hardDropPlayPiece();
-        } else if (key == Qt::Key_Z) {
-            rotatePlayPiece(-1);
-        } else if (key == Qt::Key_X || key == Qt::Key_Up) {
-            rotatePlayPiece(1);
+    void applyEntryMovementForHeldInputs() {
+        const qint64 now = playInputNow();
+        int horizontalKey = 0;
+        HeldPlayInput horizontal;
+        for (auto it = heldPlayInputs_.cbegin(); it != heldPlayInputs_.cend(); ++it) {
+            if (isPlayHorizontal(it->command) && it->pressOrder > horizontal.pressOrder) {
+                horizontalKey = it.key();
+                horizontal = it.value();
+            }
         }
+        if (horizontalKey != 0 && (horizontal.repeated || now >= horizontal.nextRepeatAtMs)) {
+            if (runPlayMovement(horizontal.command, playArrSpin_->value() == 0 ? SFT_GAME_WIDTH : 1)) {
+                HeldPlayInput &input = heldPlayInputs_[horizontalKey];
+                input.repeated = true;
+                const int interval = playInputRepeatInterval(input.command);
+                input.nextRepeatAtMs = now + (interval <= 0 ? 16 : interval);
+            }
+        }
+        for (auto it = heldPlayInputs_.begin(); it != heldPlayInputs_.end(); ++it) {
+            if (it->command == SFT_CMD_SOFT_DROP
+                && (playSoftSpin_->value() == 0 || it->repeated || now >= it->nextRepeatAtMs)) {
+                runPlayMovement(SFT_CMD_SOFT_DROP, playSoftSpin_->value() == 0 ? SFT_GAME_HEIGHT : 1);
+                it->repeated = true;
+                const int interval = playInputRepeatInterval(it->command);
+                it->nextRepeatAtMs = now + (interval <= 0 ? 16 : interval);
+                break;
+            }
+        }
+        schedulePlayInputTimer();
+    }
+
+    void applyHeldSoftDropFollowup() {
+        const qint64 now = playInputNow();
+        for (auto it = heldPlayInputs_.begin(); it != heldPlayInputs_.end(); ++it) {
+            if (it->command != SFT_CMD_SOFT_DROP) {
+                continue;
+            }
+            if (playSoftSpin_->value() == 0 || it->repeated || now >= it->nextRepeatAtMs) {
+                runPlayMovement(SFT_CMD_SOFT_DROP, playSoftSpin_->value() == 0 ? SFT_GAME_HEIGHT : 1);
+                it->repeated = true;
+                const int interval = playInputRepeatInterval(it->command);
+                it->nextRepeatAtMs = now + (interval <= 0 ? 16 : interval);
+            }
+            break;
+        }
+        schedulePlayInputTimer();
+    }
+
+    void schedulePlayInputTimer() {
+        if (!playInputTimer_) {
+            return;
+        }
+        playInputTimer_->stop();
+        if (!playHasStarted_
+            || !sectionTabs_
+            || sectionTabs_->currentIndex() != 1
+            || playGame_.game_over) {
+            return;
+        }
+
+        const qint64 now = playInputNow();
+        std::optional<qint64> nearestDeadline;
+        for (auto it = heldPlayInputs_.cbegin(); it != heldPlayInputs_.cend(); ++it) {
+            const HeldPlayInput &input = it.value();
+            if (!isRepeatablePlayInput(input.command) || horizontalInputIsBlocked(input)) {
+                continue;
+            }
+            if (!nearestDeadline.has_value() || input.nextRepeatAtMs < nearestDeadline.value()) {
+                nearestDeadline = input.nextRepeatAtMs;
+            }
+        }
+        if (!nearestDeadline.has_value()) {
+            return;
+        }
+        const qint64 remaining = qMax<qint64>(0, nearestDeadline.value() - now);
+        playInputTimer_->start(static_cast<int>(qMin<qint64>(remaining, 60000)));
+    }
+
+    void processPlayInputDeadlines() {
+        if (!playHasStarted_
+            || !sectionTabs_
+            || sectionTabs_->currentIndex() != 1
+            || playGame_.game_over) {
+            schedulePlayInputTimer();
+            return;
+        }
+
+        const qint64 now = playInputNow();
+        const SFTGameState beforeInput = playGame_;
+        QList<int> keys = heldPlayInputs_.keys();
+        std::sort(keys.begin(), keys.end(), [this](int left, int right) {
+            const HeldPlayInput &a = heldPlayInputs_[left];
+            const HeldPlayInput &b = heldPlayInputs_[right];
+            const int aPriority = a.command == SFT_CMD_SOFT_DROP ? 0 : (isPlayHorizontal(a.command) ? 1 : 2);
+            const int bPriority = b.command == SFT_CMD_SOFT_DROP ? 0 : (isPlayHorizontal(b.command) ? 1 : 2);
+            return aPriority == bPriority ? a.pressOrder < b.pressOrder : aPriority < bPriority;
+        });
+
+        for (int key : keys) {
+            if (!heldPlayInputs_.contains(key)) {
+                continue;
+            }
+            HeldPlayInput input = heldPlayInputs_.value(key);
+            if (!isRepeatablePlayInput(input.command)
+                || horizontalInputIsBlocked(input)
+                || now < input.nextRepeatAtMs) {
+                continue;
+            }
+
+            input.repeated = true;
+            const int interval = playInputRepeatInterval(input.command);
+            if (interval <= 0) {
+                runPlayMovement(
+                    input.command,
+                    input.command == SFT_CMD_SOFT_DROP ? SFT_GAME_HEIGHT : SFT_GAME_WIDTH
+                );
+                input.nextRepeatAtMs = now + 16;
+            } else {
+                const qint64 dueAt = input.nextRepeatAtMs;
+                const int repeatsDue = qMin(
+                    64,
+                    1 + static_cast<int>(qMax<qint64>(0, now - dueAt) / interval)
+                );
+                for (int repeat = 0; repeat < repeatsDue; ++repeat) {
+                    if (!runPlayMovement(input.command, 1)) {
+                        break;
+                    }
+                }
+                input.nextRepeatAtMs = dueAt + static_cast<qint64>(repeatsDue) * interval;
+                if (input.nextRepeatAtMs <= now) {
+                    input.nextRepeatAtMs = now + interval;
+                }
+            }
+            heldPlayInputs_[key] = input;
+        }
+
+        if (playVisualStateChanged(beforeInput, playGame_)) {
+            updatePlayBoard();
+        }
+        schedulePlayInputTimer();
+    }
+
+    void advancePlayFrame() {
+        if (!playHasStarted_ || !sectionTabs_ || sectionTabs_->currentIndex() != 1) {
+            updatePlayTimerState();
+            return;
+        }
+        const qint64 elapsed = playFrameClock_.isValid() ? playFrameClock_.restart() : 16;
+        const int elapsedMs = qBound(1, static_cast<int>(elapsed), 100);
+        const quint64 renderSerialBefore = playRenderSerial_;
+        const SFTGameState beforeTick = playGame_;
+        // The UI input repeater owns soft-drop timing. Feeding the held key
+        // into the gravity tick would apply an additional level-based drop.
+        sft_game_tick(&playGame_, elapsedMs, 0);
+        if (playGame_.pieces_locked != beforeTick.pieces_locked) {
+            pushPlayUndo(beforeTick);
+            applyEntryMovementForHeldInputs();
+            exportPlayBoardIfPieceLocked();
+        }
+
+        schedulePlayInputTimer();
+        playStatsRefreshElapsedMs_ += elapsedMs;
+        if (playRenderSerial_ == renderSerialBefore && playVisualStateChanged(beforeTick, playGame_)) {
+            updatePlayBoard();
+            playStatsRefreshElapsedMs_ = 0;
+        } else if (playStatsRefreshElapsedMs_ >= 250) {
+            updatePlayStats();
+            playStatsRefreshElapsedMs_ = 0;
+        }
+        if (playGame_.game_over) {
+            heldPlayInputs_.clear();
+            schedulePlayInputTimer();
+            updatePlayTimerState();
+        }
+    }
+
+    void exportPlayBoardIfPieceLocked() {
+        if (playGame_.pieces_locked == playLastExportedPieces_) {
+            return;
+        }
+        playLastExportedPieces_ = playGame_.pieces_locked;
+        exportPlayBoardToEditor(false, false);
+        invalidateAuxiliaryScout();
+        schedulePCScout(false, true);
+        if (detectPlayPerfectClear()) {
+            return;
+        }
+        checkPlayOpeningDetection();
+    }
+
+    void resetPlayOpeningDetection(int cycleStart) {
+        playOpeningCycleStartPieces_ = cycleStart;
+        playOpenerDetectionDone_ = false;
+        playVariantDetectionDone_ = false;
+        playDetectedOpenerName_.clear();
+        playDetectedOpenerMirrored_.reset();
+        playEarlyVariantDetection_ = false;
+        if (playDetectionLabel_) {
+            playDetectionLabel_->clear();
+        }
+    }
+
+    std::array<int, kFumenBlocks> playLockedFumenCells() const {
+        std::array<int, kFumenBlocks> cells{};
+        cells.fill(0);
+        sft_game_write_fumen_cells(&playGame_, 0, cells.data());
+        return cells;
+    }
+
+    bool detectPlayPerfectClear() {
+        if (playGame_.pieces_locked <= playOpeningCycleStartPieces_ || playGame_.last_clear_lines <= 0) {
+            return false;
+        }
+        const bool empty = std::all_of(std::begin(playGame_.board), std::end(playGame_.board), [](int value) {
+            return value == 0;
+        });
+        if (!empty) {
+            return false;
+        }
+        resetPlayOpeningDetection(playGame_.pieces_locked);
+        if (playDetectionLabel_) {
+            playDetectionLabel_->setText("Perfect clear");
+        }
+        return true;
+    }
+
+    std::vector<OpeningDetectionResult> strictPlayOpeningResults(
+        const std::array<int, kFumenBlocks> &cells,
+        const QString &openerFilter = QString(),
+        const std::optional<bool> &mirrorFilter = std::nullopt,
+        bool variantsOnly = false,
+        const QString &debugContext = "Play opener scan") const {
+        std::vector<OpeningDetectionResult> filtered;
+        const auto candidates = detectOpenersForCells(cells);
+        logOpeningCandidates(debugContext, candidates);
+        for (const OpeningDetectionResult &result : candidates) {
+            if (!openerFilter.isEmpty() && result.opener.openerName != openerFilter) {
+                continue;
+            }
+            if (mirrorFilter.has_value() && result.mirrored != mirrorFilter.value()) {
+                continue;
+            }
+            if (variantsOnly && result.opener.variationName.compare("Base", Qt::CaseInsensitive) == 0) {
+                continue;
+            }
+            if (result.occupancyScore < 0.77 || result.overallScore() < 0.77) {
+                continue;
+            }
+            if (result.comparableColorCells >= 6) {
+                if (result.colorScore < 0.70) {
+                    continue;
+                }
+            } else if (result.occupancyScore < 0.85) {
+                continue;
+            }
+            filtered.push_back(result);
+        }
+        return filtered;
+    }
+
+    void detectPlayVariant(const std::array<int, kFumenBlocks> &cells) {
+        playVariantDetectionDone_ = true;
+        const auto results = strictPlayOpeningResults(
+            cells,
+            playDetectedOpenerName_,
+            playDetectedOpenerMirrored_,
+            true,
+            "Play variant scan");
+        if (results.empty()) {
+            return;
+        }
+        const OpeningDetectionResult &best = results.front();
+        QString name = best.opener.openerName + " - " + best.opener.variationName;
+        if (best.mirrored) {
+            name += " mirrored";
+        }
+        if (playDetectionLabel_) {
+            playDetectionLabel_->setText("Variant: " + name);
+        }
+    }
+
+    void checkPlayOpeningDetection() {
+        const int cyclePieces = playGame_.pieces_locked - playOpeningCycleStartPieces_;
+        if (cyclePieces < 6) {
+            return;
+        }
+        const auto cells = playLockedFumenCells();
+        if (!playOpenerDetectionDone_) {
+            playOpenerDetectionDone_ = true;
+            const auto results = strictPlayOpeningResults(
+                cells, QString(), std::nullopt, false, "Play opener scan");
+            if (!results.empty()) {
+                const OpeningDetectionResult &best = results.front();
+                playDetectedOpenerName_ = best.opener.openerName;
+                playDetectedOpenerMirrored_ = best.mirrored;
+                playEarlyVariantDetection_ = best.opener.earlyVariantDetection
+                    || best.opener.openerName.compare("DPC Patterns", Qt::CaseInsensitive) == 0;
+                QString name = best.opener.openerName;
+                if (best.mirrored) {
+                    name += " mirrored";
+                }
+                if (playDetectionLabel_) {
+                    playDetectionLabel_->setText("Opener: " + name);
+                }
+            }
+        }
+        if (playDetectedOpenerName_.isEmpty() || playVariantDetectionDone_) {
+            return;
+        }
+        const int variantPieces = playEarlyVariantDetection_ ? 6 : 12;
+        if (cyclePieces >= variantPieces) {
+            detectPlayVariant(cells);
+        }
+    }
+
+    void exportPlayBoardToEditor(bool switchToEditor, bool useActivePieceSetting = true) {
+        std::array<int, kFumenBlocks> cells{};
+        cells.fill(0);
+        const bool includeActive = useActivePieceSetting && playExportActiveCheck_ && playExportActiveCheck_->isChecked();
+        sft_game_write_fumen_cells(&playGame_, includeActive ? 1 : 0, cells.data());
+        storePlayBoardInFumen(cells);
+        if (switchToEditor && sectionTabs_) {
+            sectionTabs_->setCurrentIndex(0);
+        }
+    }
+
+    void storePlayBoardInFumen(const std::array<int, kFumenBlocks> &cells) {
+        ensureFumenState();
+        fumenPages_[currentFumenPage_] = cells;
+        for (int index = 230; index < kFumenBlocks; ++index) {
+            fumenPages_[currentFumenPage_][index] = 0;
+        }
+        currentOperation_ = FumenOperation();
+        if (currentFumenPage_ >= static_cast<int>(fumenOperations_.size())) {
+            fumenOperations_.resize(fumenPages_.size());
+        }
+        fumenOperations_[currentFumenPage_] = FumenOperation();
+        playFumenEditorDirty_ = true;
+        if (playFumenSyncTimer_) {
+            playFumenSyncTimer_->start(120);
+        } else {
+            updateFumenCodeFromPages();
+        }
+    }
+
+    void synchronizePlayFumenEditor() {
+        if (!playFumenEditorDirty_) {
+            return;
+        }
+        if (playFumenSyncTimer_) {
+            playFumenSyncTimer_->stop();
+        }
+        if (placeMinoCheck_) {
+            updatingFumenControls_ = true;
+            placeMinoCheck_->setChecked(false);
+            updatingFumenControls_ = false;
+        }
+        updateMinoControls();
+        updateBoardFromFumenState();
+        updateFumenCodeFromPages();
+        playFumenEditorDirty_ = false;
+    }
+
+    QString playClearText() const {
+        const int lines = playGame_.last_clear_lines;
+        QString lineName;
+        if (lines == 1) lineName = "Single";
+        else if (lines == 2) lineName = "Double";
+        else if (lines == 3) lineName = "Triple";
+        else if (lines == 4) lineName = "Tetris";
+        else if (lines > 4) lineName = QString("%1 Lines").arg(lines);
+        if (playGame_.last_clear_t_spin) {
+            const QString spin = playGame_.last_clear_t_spin_mini ? "Mini T-Spin" : "T-Spin";
+            return lineName.isEmpty() ? spin : spin + " " + lineName;
+        }
+        return lineName;
+    }
+
+    void updatePlayStats() {
+        if (playGravityLevelBox_ && playLockSpin_) {
+            const int currentLevel = qBound(1, playGame_.gravity_level, 30);
+            const int currentLockDelay = playGame_.lock_delay_ms;
+            if (playGravityLevelBox_->currentData().toInt() != currentLevel
+                || playLockSpin_->value() != currentLockDelay) {
+                updatingPlayLevelLock_ = true;
+                playGravityLevelBox_->setCurrentIndex(currentLevel - 1);
+                playLockSpin_->setValue(currentLockDelay);
+                updatingPlayLevelLock_ = false;
+            }
+        }
+        if (playPiecesLabel_) playPiecesLabel_->setText(QString("Pieces: %1").arg(playGame_.pieces_locked));
+        if (playLinesLabel_) playLinesLabel_->setText(QString("Lines: %1").arg(playGame_.lines_cleared));
+        if (playLevelLabel_) {
+            const int progressionLines = qMax(0, playGame_.lines_cleared - playGame_.progression_start_lines);
+            const QString levelText = playGame_.level_progression_enabled
+                ? (playGame_.gravity_level >= 30
+                    ? "Level: 30 (maximum)"
+                    : QString("Level: %1 (%2/10 lines)").arg(playGame_.gravity_level).arg(progressionLines % 10))
+                : QString("Level: %1").arg(playGame_.gravity_level);
+            playLevelLabel_->setText(levelText);
+        }
+        if (playClearLabel_) playClearLabel_->setText(playClearText());
+        const double seconds = playHasStarted_ && playStatsClock_.isValid() ? playStatsClock_.elapsed() / 1000.0 : 0.0;
+        const double pps = seconds > 0 ? playGame_.pieces_locked / seconds : 0.0;
+        if (playPpsLabel_) playPpsLabel_->setText(QString("PPS: %1").arg(pps, 0, 'f', 2));
+        if (playStatusLabel_) {
+            if (playGame_.game_over) {
+                playStatusLabel_->setText("Game over");
+            } else if (playGame_.grounded && !playGame_.infinite_lock_delay) {
+                playStatusLabel_->setText(QString("Lock: %1/%2 ms").arg(playGame_.lock_elapsed_ms).arg(playGame_.lock_delay_ms));
+            } else if (playStatusLabel_->text() != "Loaded editor board into play.") {
+                playStatusLabel_->clear();
+            }
+        }
+        if (playUndoButton_) playUndoButton_->setEnabled(!playUndoStack_.empty());
+    }
+
+    void updatePiecePreviewSizes() {
+        if (!playPreviewSpin_) {
+            return;
+        }
+        if (playHoldPreview_) playHoldPreview_->setCellSize(playPreviewSpin_->value());
+        for (auto *preview : playNextPreviews_) {
+            if (preview) preview->setCellSize(playPreviewSpin_->value());
+        }
+    }
+
+    void loadPlaySettings() {
+        loadingPlaySettings_ = true;
+        QSettings settings;
+        const std::array<QString, 10> defaults = {"a", "d", "s", "space", "w", "q", "e", "c", "z", "r"};
+        const std::array<QString, 10> names = {"left", "right", "softDrop", "hardDrop", "rotateCW", "rotateCCW", "rotate180", "hold", "undo", "reset"};
+        for (int i = 0; i < static_cast<int>(playControlEdits_.size()); ++i) {
+            playControlEdits_[i]->setText(settings.value("play/control/" + names[i], defaults[i]).toString());
+        }
+        playQueueEdit_->setText(settings.value("play/customQueue", "").toString());
+        playHoldBox_->setCurrentText(settings.value("play/customHold", "-").toString());
+        playDasSpin_->setValue(settings.value("play/tuning/das", 130).toInt());
+        playArrSpin_->setValue(settings.value("play/tuning/arr", 28).toInt());
+        playSoftSpin_->setValue(settings.value("play/tuning/softDrop", 75).toInt());
+        int gravityLevel = qBound(1, settings.value("play/tuning/gravityLevel", 1).toInt(), 30);
+        const int storedLockDelay = settings.value("play/tuning/lockDelay", 500).toInt();
+        if (gravityLevel > 20 && storedLockDelay != sft_game_lock_delay_for_level(gravityLevel)) {
+            gravityLevel = 20;
+        }
+        playConfiguredGravityLevel_ = gravityLevel;
+        playConfiguredLockDelay_ = gravityLevel > 20
+            ? sft_game_lock_delay_for_level(gravityLevel)
+            : storedLockDelay;
+        playGravityLevelBox_->setCurrentIndex(gravityLevel - 1);
+        playLockSpin_->setValue(playConfiguredLockDelay_);
+        playMoveResetLimitSpin_->setValue(settings.value("play/tuning/moveResetLimit", 15).toInt());
+        playPreviewSpin_->setValue(settings.value("play/previewCellSize", 14).toInt());
+        playGravityCheck_->setChecked(settings.value("play/rules/gravity", true).toBool());
+        playLevelProgressionCheck_->setChecked(settings.value("play/rules/levelProgression", false).toBool());
+        const bool stepReset = settings.value("play/rules/stepReset", false).toBool();
+        playStepResetCheck_->setChecked(stepReset);
+        playMoveResetCheck_->setChecked(!stepReset && settings.value("play/rules/moveReset", true).toBool());
+        playMoveResetLimitSpin_->setEnabled(playMoveResetCheck_->isChecked());
+        playInfiniteLockCheck_->setChecked(settings.value("play/rules/infiniteLock", false).toBool());
+        playInfiniteHoldCheck_->setChecked(settings.value("play/rules/infiniteHold", false).toBool());
+        playExportActiveCheck_->setChecked(settings.value("play/rules/exportActive", false).toBool());
+        loadingPlaySettings_ = false;
+    }
+
+    void savePlaySettings() {
+        if (loadingPlaySettings_ || !playQueueEdit_) {
+            return;
+        }
+        QSettings settings;
+        const std::array<QString, 10> names = {"left", "right", "softDrop", "hardDrop", "rotateCW", "rotateCCW", "rotate180", "hold", "undo", "reset"};
+        for (int i = 0; i < static_cast<int>(playControlEdits_.size()); ++i) {
+            settings.setValue("play/control/" + names[i], playControlEdits_[i]->text());
+        }
+        settings.setValue("play/customQueue", playQueueEdit_->text());
+        settings.setValue("play/customHold", playHoldBox_->currentText());
+        settings.setValue("play/tuning/das", playDasSpin_->value());
+        settings.setValue("play/tuning/arr", playArrSpin_->value());
+        settings.setValue("play/tuning/softDrop", playSoftSpin_->value());
+        settings.setValue("play/tuning/gravityLevel", playConfiguredGravityLevel_);
+        settings.setValue("play/tuning/lockDelay", playConfiguredLockDelay_);
+        settings.setValue("play/tuning/moveResetLimit", playMoveResetLimitSpin_->value());
+        settings.setValue("play/previewCellSize", playPreviewSpin_->value());
+        settings.setValue("play/rules/gravity", playGravityCheck_->isChecked());
+        settings.setValue("play/rules/levelProgression", playLevelProgressionCheck_->isChecked());
+        settings.setValue("play/rules/moveReset", playMoveResetCheck_->isChecked());
+        settings.setValue("play/rules/stepReset", playStepResetCheck_->isChecked());
+        settings.setValue("play/rules/infiniteLock", playInfiniteLockCheck_->isChecked());
+        settings.setValue("play/rules/infiniteHold", playInfiniteHoldCheck_->isChecked());
+        settings.setValue("play/rules/exportActive", playExportActiveCheck_->isChecked());
     }
 
     void selectPaint(int value) {
@@ -2892,14 +5290,24 @@ pre, code {
         }
     }
 
-    void loadOpeners() {
+    void loadOpeners(bool resetEditor = true) {
         openers_.clear();
-        QFile file(repoRoot_ + "/shared/openers.json");
+        const QString databasePath = openerDatabasePath(repoRoot_);
+        QFile file(databasePath);
         if (!file.open(QIODevice::ReadOnly)) {
-            outputEdit_->appendPlainText("Could not open shared/openers.json");
+            if (outputEdit_) {
+                outputEdit_->appendPlainText("Could not open " + databasePath);
+            }
+            DiagnosticLog::instance().append("Could not open opener database: " + databasePath);
             return;
         }
-        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+            DiagnosticLog::instance().append(
+                "Could not parse opener database " + databasePath + ": " + parseError.errorString());
+            return;
+        }
         const QJsonArray array = doc.object().value("openers").toArray();
         for (const QJsonValue &value : array) {
             const QJsonObject object = value.toObject();
@@ -2908,6 +5316,7 @@ pre, code {
             opener.openerName = object.value("openerName").toString(object.value("name").toString());
             opener.variationName = object.value("variationName").toString("Base");
             opener.code = object.value("code").toString();
+            opener.earlyVariantDetection = object.value("earlyVariantDetection").toBool(false);
             if (!opener.openerName.isEmpty()) {
                 openers_.push_back(opener);
             }
@@ -2933,7 +5342,13 @@ pre, code {
         openerVariationBox_->blockSignals(false);
         openerGroupBox_->blockSignals(false);
         loadingOpeners_ = false;
-        selectEmptyBoardPreset();
+        if (resetEditor) {
+            selectEmptyBoardPreset();
+        }
+        DiagnosticLog::instance().append(
+            QString("Loaded %1 opener records from %2")
+                .arg(static_cast<int>(openers_.size()))
+                .arg(databasePath));
     }
 
     void selectEmptyBoardPreset() {
@@ -3012,6 +5427,7 @@ pre, code {
     }
 
     void replaceCurrentPageWithFumenCells(const std::array<int, kFumenBlocks> &cells) {
+        playFumenEditorDirty_ = false;
         ensureFumenState();
         fumenPages_[currentFumenPage_] = cells;
         for (int index = 230; index < kFumenBlocks; ++index) {
@@ -3028,17 +5444,20 @@ pre, code {
         updateFumenCodeFromPages();
     }
 
-    void importBoardScreenshot() {
+    bool importBoardScreenshot() {
         const auto image = captureBoardScreenshot(this);
         if (!image.has_value()) {
-            return;
+            return false;
         }
         const bool preservingColors = !commandBox_ || commandBox_->currentText() != "setup";
         const auto cells = fumenCellsFromBoardImage(*image, preservingColors);
         if (!cells.has_value()) {
             QMessageBox::warning(this, "Screenshot", "Could not read the screenshot as a Tetris board.");
-            return;
+            DiagnosticLog::instance().append("Board screenshot classification failed.");
+            return false;
         }
+        const int occupied = static_cast<int>(std::count_if(
+            cells->begin(), cells->end(), [](int value) { return value != 0; }));
         replaceCurrentPageWithFumenCells(*cells);
         if (commandBox_ && commandBox_->currentText() == "setup") {
             convertFumenToSetupGray();
@@ -3046,6 +5465,11 @@ pre, code {
         if (outputEdit_) {
             appendRawOutput("\nImported board screenshot.\n");
         }
+        DiagnosticLog::instance().append(
+            QString("Imported board screenshot: %1 occupied cells, colors %2")
+                .arg(occupied)
+                .arg(preservingColors ? "preserved" : "forced gray"));
+        return true;
     }
 
     std::vector<std::vector<int>> fumenOccupancyMask(const std::array<int, kFumenBlocks> &cells, bool mirrored = false) const {
@@ -3259,6 +5683,30 @@ pre, code {
         return results;
     }
 
+    void logOpeningCandidates(
+        const QString &context,
+        const std::vector<OpeningDetectionResult> &results) const {
+        QStringList lines;
+        const int count = qMin(8, static_cast<int>(results.size()));
+        for (int index = 0; index < count; ++index) {
+            const OpeningDetectionResult &result = results[index];
+            lines << QString(
+                         "%1. %2 | overall %3% | shape %4% | color %5% (%6 cells) | page %7 | row %8")
+                         .arg(index + 1)
+                         .arg(result.displayName())
+                         .arg(result.overallScore() * 100.0, 0, 'f', 1)
+                         .arg(result.occupancyScore * 100.0, 0, 'f', 1)
+                         .arg(result.colorScore * 100.0, 0, 'f', 1)
+                         .arg(result.comparableColorCells)
+                         .arg(result.pageIndex + 1)
+                         .arg(result.rowOffset);
+        }
+        if (lines.isEmpty()) {
+            lines << "No candidates passed the preliminary shape threshold.";
+        }
+        DiagnosticLog::instance().appendBlock(context, lines);
+    }
+
     std::array<int, kFumenBlocks> mirroredFumenPage(std::array<int, kFumenBlocks> page) const {
         std::array<int, kFumenBlocks> mirrored{};
         mirrored.fill(0);
@@ -3305,24 +5753,15 @@ pre, code {
             return;
         }
         const auto results = detectOpenersForCells(*cells);
+        logOpeningCandidates("Screenshot opener scan", results);
         if (results.empty() || results.front().overallScore() < 0.58) {
             QMessageBox::information(this, "Opener Detector", "No opener match found.");
-            if (!results.empty()) {
-                appendRawOutput(QString("\nClosest opener: %1 (overall %2%, shape %3%, color %4%).\n")
-                                    .arg(results.front().displayName())
-                                    .arg(results.front().overallScore() * 100.0, 0, 'f', 1)
-                                    .arg(results.front().occupancyScore * 100.0, 0, 'f', 1)
-                                    .arg(results.front().colorScore * 100.0, 0, 'f', 1));
-            }
             return;
         }
 
         const OpeningDetectionResult &best = results.front();
-        const QString message = QString("%1\n\nOverall %2% | Shape %3% | Color %4%\n\nAdd this opener to the editor?")
-                                    .arg(best.displayName())
-                                    .arg(best.overallScore() * 100.0, 0, 'f', 1)
-                                    .arg(best.occupancyScore * 100.0, 0, 'f', 1)
-                                    .arg(best.colorScore * 100.0, 0, 'f', 1);
+        const QString message =
+            best.displayName() + "\n\nAdd this opener to the editor?";
         QMessageBox box(QMessageBox::Question, "Opener Match Found", message, QMessageBox::NoButton, this);
         auto *addButton = box.addButton("Add to Editor", QMessageBox::AcceptRole);
         box.addButton("Close", QMessageBox::RejectRole);
@@ -3426,6 +5865,1262 @@ pre, code {
         return path;
     }
 
+    std::pair<QString, QStringList> sfinderLaunchCommand() const {
+        QString program;
+        QStringList args;
+        const QString linuxLauncher = repoRoot_ + "/native-linux/bin/sfinder";
+        const QString macLauncher = repoRoot_ + "/native-macos/bin/sfinder";
+#ifndef Q_OS_WIN
+        if (QFileInfo::exists(linuxLauncher)) {
+            program = linuxLauncher;
+        } else if (QFileInfo::exists(macLauncher) && QSysInfo::productType() == "macos") {
+            program = macLauncher;
+        } else {
+            program = "java";
+            args << "-jar" << repoRoot_ + "/solution-finder-1.43/sfinder.jar";
+        }
+#else
+        program = "java.exe";
+        args << "-jar" << repoRoot_ + "/solution-finder-1.43/sfinder.jar";
+#endif
+        return {program, args};
+    }
+
+    QString auxiliaryScoutFieldText(int *heightOut = nullptr) const {
+        int height = 1;
+        for (int y = 0; y < SFT_GAME_HEIGHT; ++y) {
+            for (int x = 0; x < SFT_GAME_WIDTH; ++x) {
+                if (playGame_.board[y * SFT_GAME_WIDTH + x] != 0) {
+                    height = qMax(height, y + 1);
+                }
+            }
+        }
+        if (heightOut) {
+            *heightOut = height;
+        }
+
+        QString text;
+        for (int y = height - 1; y >= 0; --y) {
+            for (int x = 0; x < SFT_GAME_WIDTH; ++x) {
+                text += playGame_.board[y * SFT_GAME_WIDTH + x] == 0 ? "_" : "X";
+            }
+            text += "\n";
+        }
+        return text;
+    }
+
+    QString activeScoutPattern(int depth) const {
+        std::array<char, SFT_GAME_PATTERN_TEXT_CAPACITY> pattern{};
+        const int patternLength = sft_game_write_active_pattern(
+            &playGame_,
+            depth,
+            pattern.data(),
+            static_cast<int>(pattern.size()));
+        return patternLength > 0
+            ? QString::fromLatin1(pattern.data(), patternLength)
+            : QString();
+    }
+
+    QSet<QString> legalActiveScoutPatterns(int maximumDepth) const {
+        QSet<QString> legalPatterns;
+        for (int depth = 1; depth <= maximumDepth; ++depth) {
+            std::array<char, SFT_GAME_PATTERN_TEXT_CAPACITY> patterns{};
+            const int length = sft_game_write_active_patterns(
+                &playGame_,
+                depth,
+                patterns.data(),
+                static_cast<int>(patterns.size()));
+            if (length <= 0) {
+                continue;
+            }
+            const QString text = QString::fromLatin1(patterns.data(), length);
+            for (const QString &pattern : text.split(';', Qt::SkipEmptyParts)) {
+                legalPatterns.insert(pattern.trimmed().toUpper());
+            }
+        }
+        return legalPatterns;
+    }
+
+    QString scoutPieceSetKey(QString pieces) const {
+        pieces = pieces.trimmed().toUpper();
+        std::sort(pieces.begin(), pieces.end());
+        return pieces;
+    }
+
+    void updateAuxiliaryScoutControls() {
+        const bool running = auxiliaryScoutProcess_ != nullptr;
+        const bool blocked = process_ != nullptr || pcScoutProcess_ != nullptr;
+        if (playSpinScoutButton_) {
+            playSpinScoutButton_->setEnabled(!running && !blocked);
+        }
+        if (playRenScoutButton_) {
+            playRenScoutButton_->setEnabled(!running && !blocked);
+        }
+        if (playSpinScoutCancelButton_) {
+            playSpinScoutCancelButton_->setEnabled(running && auxiliaryScoutMode_ == "spin");
+        }
+        if (playRenScoutCancelButton_) {
+            playRenScoutCancelButton_->setEnabled(running && auxiliaryScoutMode_ == "ren");
+        }
+        if (playSpinScoutPreviewButton_) {
+            const bool showing = activeAuxiliaryPreviewMode_ == "spin";
+            playSpinScoutPreviewButton_->setText(showing ? "Hide Preview" : "Show Preview");
+            playSpinScoutPreviewButton_->setEnabled(
+                !running && (showing || overlayHasCells(playSpinScoutOverlayCells_)));
+        }
+        if (playRenScoutPreviewButton_) {
+            const bool showing = activeAuxiliaryPreviewMode_ == "ren";
+            playRenScoutPreviewButton_->setText(showing ? "Hide Preview" : "Show Preview");
+            playRenScoutPreviewButton_->setEnabled(
+                !running && (showing || overlayHasCells(playRenScoutOverlayCells_)));
+        }
+    }
+
+    bool overlayHasCells(const std::array<int, kColumns * kRows> &cells) const {
+        return std::any_of(cells.begin(), cells.end(), [](int value) { return value > 0; });
+    }
+
+    void refreshPlaySolutionOverlay() {
+        if (!playBoard_) {
+            return;
+        }
+        if (activeAuxiliaryPreviewMode_ == "spin"
+            && overlayHasCells(playSpinScoutOverlayCells_)) {
+            playBoard_->setSolutionCells(playSpinScoutOverlayCells_);
+            return;
+        }
+        if (activeAuxiliaryPreviewMode_ == "ren"
+            && overlayHasCells(playRenScoutOverlayCells_)) {
+            playBoard_->setSolutionCells(playRenScoutOverlayCells_);
+            return;
+        }
+        if (activeAuxiliaryPreviewMode_.isEmpty()
+            && pcScoutSolutionVisible_
+            && overlayHasCells(pcScoutSolutionCells_)) {
+            playBoard_->setSolutionCells(pcScoutSolutionCells_);
+            return;
+        }
+        playBoard_->clearSolutionCells();
+    }
+
+    std::optional<std::array<int, kColumns * kRows>> scoutOverlayForCode(
+        const QString &code,
+        const SFTGameState &baseGame,
+        bool firstPlacementOnly,
+        int *addedCellCount = nullptr
+    ) const {
+        const auto decoded = decodeFumenV115(code);
+        if (!decoded.has_value() || decoded->pages.empty()) {
+            return std::nullopt;
+        }
+
+        std::array<int, kColumns * kRows> best{};
+        best.fill(0);
+        int bestCount = 0;
+        for (int pageIndex = 0; pageIndex < static_cast<int>(decoded->pages.size()); ++pageIndex) {
+            std::array<int, kFumenBlocks> field = decoded->pages[pageIndex];
+            if (pageIndex < static_cast<int>(decoded->operations.size())) {
+                const FumenOperation &operation = decoded->operations[pageIndex];
+                if (operation.type > 0) {
+                    for (int index : fumenOperationCells(operation)) {
+                        if (0 <= index && index < kFumenBlocks) {
+                            field[index] = operation.type;
+                        }
+                    }
+                }
+            }
+
+            const auto visible = visibleFumenCells(field);
+            std::array<int, kColumns * kRows> candidate{};
+            candidate.fill(0);
+            int candidateCount = 0;
+            for (int row = 0; row < kRows; ++row) {
+                const int gameY = kRows - 1 - row;
+                for (int column = 0; column < kColumns; ++column) {
+                    const int visibleIndex = row * kColumns + column;
+                    const int gameIndex = gameY * SFT_GAME_WIDTH + column;
+                    if (baseGame.board[gameIndex] == 0 && visible[visibleIndex] > 0) {
+                        candidate[visibleIndex] = visible[visibleIndex];
+                        ++candidateCount;
+                    }
+                }
+            }
+            if (candidateCount > 0 && firstPlacementOnly) {
+                if (addedCellCount) {
+                    *addedCellCount = candidateCount;
+                }
+                return candidate;
+            }
+            if (candidateCount > bestCount) {
+                best = candidate;
+                bestCount = candidateCount;
+            }
+        }
+
+        if (bestCount <= 0) {
+            return std::nullopt;
+        }
+        if (addedCellCount) {
+            *addedCellCount = bestCount;
+        }
+        return best;
+    }
+
+    std::pair<int, int> spinSurfacePenalties(
+        const SFTGameState &baseGame,
+        const std::array<int, kColumns * kRows> &overlay
+    ) const {
+        std::array<int, kColumns> heights{};
+        heights.fill(0);
+        for (int column = 0; column < kColumns; ++column) {
+            for (int y = 0; y < kRows; ++y) {
+                const int gameIndex = y * SFT_GAME_WIDTH + column;
+                const int visibleIndex = (kRows - 1 - y) * kColumns + column;
+                if (baseGame.board[gameIndex] != 0 || overlay[visibleIndex] != 0) {
+                    heights[column] = y + 1;
+                }
+            }
+        }
+
+        int pillarPenalty = 0;
+        int bumpiness = 0;
+        for (int column = 0; column < kColumns; ++column) {
+            if (column + 1 < kColumns) {
+                bumpiness += std::abs(heights[column] - heights[column + 1]);
+            }
+            const int left = column > 0 ? heights[column - 1] : heights[column];
+            const int right = column + 1 < kColumns ? heights[column + 1] : heights[column];
+            const int rise = heights[column] - qMax(left, right);
+            if (rise > 1) {
+                pillarPenalty += rise * rise;
+            }
+            if (column + 1 < kColumns) {
+                const int cliff = std::abs(heights[column] - heights[column + 1]);
+                if (cliff > 2) {
+                    pillarPenalty += (cliff - 2) * (cliff - 2);
+                }
+            }
+        }
+        return {pillarPenalty, bumpiness};
+    }
+
+    std::optional<SpinScoutChoice> bestSpinScoutChoice(
+        const QString &html,
+        const SFTGameState &baseGame,
+        const QSet<QString> &legalPatterns,
+        int *queueSolutionCount = nullptr
+    ) const {
+        const QRegularExpression candidatePattern(
+            R"SPIN(<div>\[([^\]]+)\]\s*<a href='[^']*?(v115@[A-Za-z0-9+/\?]+)'[^>]*>([^<]*)</a>\s*\[clear=(\d+),\s*hole=(\d+),\s*piece=(\d+)\])SPIN",
+            QRegularExpression::CaseInsensitiveOption);
+        struct RawChoice {
+            QString mark;
+            QString code;
+            QString route;
+            int holes = 0;
+            int pieces = 0;
+        };
+        std::vector<RawChoice> rawChoices;
+        QSet<QString> legalPieceSets;
+        for (const QString &pattern : legalPatterns) {
+            legalPieceSets.insert(scoutPieceSetKey(pattern));
+        }
+        int minimumValidity = 1;
+        int minimumHoles = std::numeric_limits<int>::max();
+        int minimumPieces = std::numeric_limits<int>::max();
+        QRegularExpressionMatchIterator matches = candidatePattern.globalMatch(html);
+        while (matches.hasNext()) {
+            const QRegularExpressionMatch match = matches.next();
+            RawChoice raw;
+            raw.mark = match.captured(1).trimmed().toUpper();
+            raw.code = match.captured(2);
+            raw.route = match.captured(3);
+            raw.holes = match.captured(5).toInt();
+            raw.pieces = match.captured(6).toInt();
+
+            QString routePieces;
+            const QRegularExpression routePattern(R"((?:^|\s)([TIJLSZO])-)");
+            QRegularExpressionMatchIterator routeMatches =
+                routePattern.globalMatch(raw.route.toUpper());
+            while (routeMatches.hasNext()) {
+                routePieces += routeMatches.next().captured(1);
+            }
+            if (routePieces.size() != raw.pieces
+                || routePieces.isEmpty()
+                || !legalPieceSets.contains(scoutPieceSetKey(routePieces))) {
+                continue;
+            }
+
+            rawChoices.push_back(raw);
+            const int validity = raw.mark == "O" ? 0 : 1;
+            if (validity < minimumValidity
+                || (validity == minimumValidity && raw.holes < minimumHoles)
+                || (validity == minimumValidity
+                    && raw.holes == minimumHoles
+                    && raw.pieces < minimumPieces)) {
+                minimumValidity = validity;
+                minimumHoles = raw.holes;
+                minimumPieces = raw.pieces;
+            }
+        }
+        if (queueSolutionCount) {
+            *queueSolutionCount = static_cast<int>(rawChoices.size());
+        }
+
+        std::optional<SpinScoutChoice> best;
+        QSet<QString> evaluatedCodes;
+        for (const RawChoice &raw : rawChoices) {
+            const int validity = raw.mark == "O" ? 0 : 1;
+            if (validity != minimumValidity
+                || raw.holes != minimumHoles
+                || raw.pieces > minimumPieces + 2
+                || evaluatedCodes.contains(raw.code)
+                || evaluatedCodes.size() >= 512) {
+                continue;
+            }
+            evaluatedCodes.insert(raw.code);
+            const auto overlay = scoutOverlayForCode(raw.code, baseGame, false);
+            if (!overlay.has_value()) {
+                continue;
+            }
+            const auto [pillarPenalty, bumpiness] =
+                spinSurfacePenalties(baseGame, overlay.value());
+
+            SpinScoutChoice choice;
+            choice.code = raw.code;
+            choice.holes = raw.holes;
+            choice.pieces = raw.pieces;
+            choice.pillarPenalty = pillarPenalty;
+            choice.bumpiness = bumpiness;
+            const int validityPenalty = validity;
+            choice.score =
+                static_cast<qint64>(validityPenalty) * 1000000000LL
+                + static_cast<qint64>(choice.holes) * 1000000LL
+                + static_cast<qint64>(choice.pillarPenalty) * 10000LL
+                + static_cast<qint64>(choice.pieces) * 100LL
+                + choice.bumpiness;
+            if (!best.has_value() || choice.score < best->score) {
+                best = choice;
+            }
+        }
+        return best;
+    }
+
+    void scheduleAuxiliaryScouts(bool immediate = false) {
+        auxiliaryAutoQueue_.clear();
+        if (!auxiliaryScoutRefreshTimer_) {
+            return;
+        }
+        auxiliaryScoutRefreshTimer_->stop();
+        const bool spinEnabled =
+            playSpinScoutAutoCheck_ && playSpinScoutAutoCheck_->isChecked();
+        const bool renEnabled =
+            playRenScoutAutoCheck_ && playRenScoutAutoCheck_->isChecked();
+        if (!spinEnabled && !renEnabled) {
+            return;
+        }
+        auxiliaryScoutRefreshTimer_->start(immediate ? 0 : 250);
+    }
+
+    void runScheduledAuxiliaryScout() {
+        if (process_ || pcScoutProcess_ || auxiliaryScoutProcess_) {
+            if (auxiliaryScoutRefreshTimer_) {
+                auxiliaryScoutRefreshTimer_->start(250);
+            }
+            return;
+        }
+        if (auxiliaryAutoQueue_.isEmpty()) {
+            if (playSpinScoutAutoCheck_ && playSpinScoutAutoCheck_->isChecked()) {
+                auxiliaryAutoQueue_ << "spin";
+            }
+            if (playRenScoutAutoCheck_ && playRenScoutAutoCheck_->isChecked()) {
+                auxiliaryAutoQueue_ << "ren";
+            }
+        }
+        while (!auxiliaryAutoQueue_.isEmpty()) {
+            const QString mode = auxiliaryAutoQueue_.takeFirst();
+            const bool enabled = mode == "spin"
+                ? playSpinScoutAutoCheck_ && playSpinScoutAutoCheck_->isChecked()
+                : playRenScoutAutoCheck_ && playRenScoutAutoCheck_->isChecked();
+            if (enabled) {
+                runAuxiliaryScout(mode, true);
+                return;
+            }
+        }
+    }
+
+    void completeAuxiliaryScoutRun(bool automaticRun) {
+        updateAuxiliaryScoutControls();
+        if (automaticRun && !auxiliaryAutoQueue_.isEmpty()) {
+            QTimer::singleShot(0, this, [this]() { runScheduledAuxiliaryScout(); });
+            return;
+        }
+        auxiliaryAutoQueue_.clear();
+        if (playPCEnabledCheck_ && playPCEnabledCheck_->isChecked()) {
+            schedulePCScout(true);
+        }
+    }
+
+    void invalidateAuxiliaryScout(const QString &status = "Board changed; scout again") {
+        if (auxiliaryScoutRefreshTimer_) {
+            auxiliaryScoutRefreshTimer_->stop();
+        }
+        auxiliaryAutoQueue_.clear();
+        if (auxiliaryScoutProcess_) {
+            QProcess *process = auxiliaryScoutProcess_;
+            auxiliaryScoutProcess_ = nullptr;
+            process->terminate();
+            QTimer::singleShot(250, process, [process]() {
+                if (process->state() != QProcess::NotRunning) {
+                    process->kill();
+                }
+            });
+        }
+        auxiliaryScoutAutomaticRun_ = false;
+        playSpinScoutFumen_.clear();
+        playRenScoutFumen_.clear();
+        playSpinScoutOverlayCells_.fill(0);
+        playRenScoutOverlayCells_.fill(0);
+        auxiliaryScoutMode_.clear();
+        auxiliaryScoutOutput_.clear();
+        if (playSpinScoutResultLabel_) {
+            playSpinScoutResultLabel_->clear();
+        }
+        if (playRenScoutResultLabel_) {
+            playRenScoutResultLabel_->clear();
+        }
+        if (playSpinScoutStatusLabel_) {
+            playSpinScoutStatusLabel_->setText(status);
+        }
+        if (playRenScoutStatusLabel_) {
+            playRenScoutStatusLabel_->setText(status);
+        }
+        updateAuxiliaryScoutControls();
+        refreshPlaySolutionOverlay();
+        scheduleAuxiliaryScouts();
+    }
+
+    void runAuxiliaryScout(const QString &mode, bool automaticRun = false) {
+        QLabel *statusLabel = mode == "spin" ? playSpinScoutStatusLabel_ : playRenScoutStatusLabel_;
+        QLabel *resultLabel = mode == "spin" ? playSpinScoutResultLabel_ : playRenScoutResultLabel_;
+        if (process_ || pcScoutProcess_ || auxiliaryScoutProcess_) {
+            if (statusLabel) {
+                statusLabel->setText("Another sfinder search is running");
+            }
+            if (automaticRun && auxiliaryScoutRefreshTimer_) {
+                auxiliaryScoutRefreshTimer_->start(250);
+            }
+            return;
+        }
+
+        const int depth = mode == "spin"
+            ? playSpinScoutPiecesSpin_->value()
+            : playRenScoutPiecesSpin_->value();
+        const QString pattern = activeScoutPattern(depth);
+        if (pattern.isEmpty()) {
+            statusLabel->setText("Could not read enough pieces from the active queue");
+            completeAuxiliaryScoutRun(automaticRun);
+            return;
+        }
+        const QSet<QString> legalSpinPatterns =
+            mode == "spin" ? legalActiveScoutPatterns(depth) : QSet<QString>();
+
+        int fieldHeight = 1;
+        const QString fieldText = auxiliaryScoutFieldText(&fieldHeight);
+        const QString fieldPath = writeTextFile("play-" + mode + "-scout-field.txt", fieldText);
+        QDir runDir(appDataDir());
+        runDir.mkpath("run");
+        const QString outputBase = runDir.filePath("run/play-" + mode + "-scout");
+        QFile::remove(outputBase + ".html");
+
+        auto launch = sfinderLaunchCommand();
+        QStringList args = launch.second;
+        args << mode
+             << "-fp" << fieldPath
+             << "-p" << pattern;
+        if (mode == "spin") {
+            const int requiredLines = playSpinScoutLinesBox_->currentData().toInt();
+            const int fillTop = qMin(kRows, qMax(fieldHeight, requiredLines + 2));
+            args << "-c" << QString::number(requiredLines)
+                 << "-fb" << "0"
+                 << "-ft" << QString::number(fillTop)
+                 << "-m" << QString::number(qMin(kRows, fillTop + 2))
+                 << "-r" << "false"
+                 << "-mr" << "0"
+                 << "-f" << "strict"
+                 << "-fo" << "html"
+                 << "-o" << outputBase;
+            playSpinScoutFumen_.clear();
+        } else {
+            args << "-H" << "avoid"
+                 << "-d" << playRenScoutDropBox_->currentData().toString()
+                 << "-K" << "srs"
+                 << "-o" << outputBase;
+            playRenScoutFumen_.clear();
+        }
+
+        auxiliaryScoutMode_ = mode;
+        auxiliaryScoutAutomaticRun_ = automaticRun;
+        auxiliaryScoutGame_ = playGame_;
+        auxiliaryScoutOutput_.clear();
+        resultLabel->clear();
+        statusLabel->setText(
+            mode == "spin" ? "Searching for bounded T-spin setups..." : "Searching for REN routes...");
+        DiagnosticLog::instance().append(
+            QString("%1 scout launched: %2 %3")
+                .arg(mode.toUpper(), launch.first, args.join(" ")));
+
+        QProcess *process = new QProcess(this);
+        auxiliaryScoutProcess_ = process;
+        updateAuxiliaryScoutControls();
+        process->setWorkingDirectory(repoRoot_);
+        process->setProcessChannelMode(QProcess::MergedChannels);
+#ifdef Q_OS_WIN
+        process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *arguments) {
+            constexpr unsigned long kCreateNoWindow = 0x08000000UL;
+            arguments->flags |= kCreateNoWindow;
+        });
+#endif
+        connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+            if (auxiliaryScoutProcess_ == process) {
+                auxiliaryScoutOutput_ += QString::fromLocal8Bit(process->readAllStandardOutput());
+            } else {
+                process->readAllStandardOutput();
+            }
+        });
+        connect(process, &QProcess::finished, this, [
+                    this,
+                    process,
+                    mode,
+                    depth,
+                    pattern,
+                    legalSpinPatterns,
+                    outputBase,
+                    automaticRun
+                ](int exitCode, QProcess::ExitStatus exitStatus) {
+            const QString output =
+                auxiliaryScoutOutput_ + QString::fromLocal8Bit(process->readAllStandardOutput());
+            process->deleteLater();
+            if (auxiliaryScoutProcess_ != process) {
+                return;
+            }
+            auxiliaryScoutProcess_ = nullptr;
+            auxiliaryScoutMode_.clear();
+            auxiliaryScoutAutomaticRun_ = false;
+
+            QLabel *finishedStatus =
+                mode == "spin" ? playSpinScoutStatusLabel_ : playRenScoutStatusLabel_;
+            QLabel *finishedResult =
+                mode == "spin" ? playSpinScoutResultLabel_ : playRenScoutResultLabel_;
+            if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+                finishedStatus->setText("Scout failed; details were added to Output Log");
+                DiagnosticLog::instance().appendBlock(
+                    mode.toUpper() + " scout failed",
+                    {QString("exit %1").arg(exitCode), output.trimmed()});
+                completeAuxiliaryScoutRun(automaticRun);
+                return;
+            }
+
+            const QString resultPath = outputBase + ".html";
+            QFile resultFile(resultPath);
+            if (!resultFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                finishedStatus->setText("sfinder did not create a readable scout result");
+                completeAuxiliaryScoutRun(automaticRun);
+                return;
+            }
+            const QString html = QString::fromUtf8(resultFile.readAll());
+            const QRegularExpression countPattern(
+                R"(<header>\s*(\d+)\s+solutions?\s*</header>)",
+                QRegularExpression::CaseInsensitiveOption);
+            const QRegularExpressionMatch countMatch = countPattern.match(html);
+            const int solutionCount = countMatch.hasMatch() ? countMatch.captured(1).toInt() : 0;
+            const QRegularExpression codePattern("v115@[A-Za-z0-9+/\\?]+");
+            const QRegularExpressionMatch codeMatch = codePattern.match(html);
+            QString code = codeMatch.hasMatch() ? codeMatch.captured(0) : QString();
+
+            if (mode == "spin") {
+                int queueSolutionCount = 0;
+                const auto bestChoice = bestSpinScoutChoice(
+                    html,
+                    auxiliaryScoutGame_,
+                    legalSpinPatterns,
+                    &queueSolutionCount);
+                if (bestChoice.has_value()) {
+                    code = bestChoice->code;
+                } else {
+                    code.clear();
+                }
+                playSpinScoutFumen_ = code;
+                playSpinScoutOverlayCells_.fill(0);
+                if (const auto overlay =
+                        scoutOverlayForCode(code, auxiliaryScoutGame_, false);
+                    overlay.has_value()) {
+                    playSpinScoutOverlayCells_ = overlay.value();
+                }
+                if (bestChoice.has_value()) {
+                    finishedResult->setText(
+                        QString("Best of %1: %2 holes · %3 pieces · pillar score %4")
+                            .arg(queueSolutionCount)
+                            .arg(bestChoice->holes)
+                            .arg(bestChoice->pieces)
+                            .arg(bestChoice->pillarPenalty));
+                    DiagnosticLog::instance().append(
+                        QString("Spin scout selected score %1: holes=%2, pieces=%3, pillars=%4, bumpiness=%5")
+                            .arg(bestChoice->score)
+                            .arg(bestChoice->holes)
+                            .arg(bestChoice->pieces)
+                            .arg(bestChoice->pillarPenalty)
+                            .arg(bestChoice->bumpiness));
+                } else {
+                    finishedResult->setText(
+                        solutionCount > 0
+                            ? "No T-spin setup is reachable from the active queue and hold"
+                            : "No practical T-spin setup found");
+                }
+                DiagnosticLog::instance().append(
+                    QString("Spin scout queue filter: %1/%2 setups use pieces available from %3 across %4 legal queue/hold windows")
+                        .arg(queueSolutionCount)
+                        .arg(solutionCount)
+                        .arg(pattern)
+                        .arg(legalSpinPatterns.size()));
+            } else {
+                playRenScoutFumen_ = code;
+                playRenScoutOverlayCells_.fill(0);
+                if (const auto overlay =
+                        scoutOverlayForCode(code, auxiliaryScoutGame_, true);
+                    overlay.has_value()) {
+                    playRenScoutOverlayCells_ = overlay.value();
+                }
+                int maxRen = 0;
+                const QRegularExpression renPattern(
+                    R"(<h2>\s*(\d+)\s+Ren\s*</h2>)",
+                    QRegularExpression::CaseInsensitiveOption);
+                QRegularExpressionMatchIterator renMatches = renPattern.globalMatch(html);
+                while (renMatches.hasNext()) {
+                    maxRen = qMax(maxRen, renMatches.next().captured(1).toInt());
+                }
+                const QString renLength = maxRen >= 7 ? "7+" : QString::number(maxRen);
+                finishedResult->setText(
+                    solutionCount > 0
+                        ? QString("Best route: %1 REN  |  %2 solutions")
+                              .arg(renLength)
+                              .arg(solutionCount)
+                        : "No REN route found");
+            }
+            refreshPlaySolutionOverlay();
+            finishedStatus->setText(QString("Finished with the active %1-piece queue window").arg(depth));
+            DiagnosticLog::instance().append(
+                QString("%1 scout finished: %2 solutions from %3 pieces")
+                    .arg(mode.toUpper())
+                    .arg(solutionCount)
+                    .arg(depth));
+            completeAuxiliaryScoutRun(automaticRun);
+        });
+
+        process->start(launch.first, args);
+        if (!process->waitForStarted(1000)) {
+            auxiliaryScoutProcess_ = nullptr;
+            auxiliaryScoutMode_.clear();
+            auxiliaryScoutAutomaticRun_ = false;
+            process->deleteLater();
+            statusLabel->setText("Scout failed to start sfinder");
+            DiagnosticLog::instance().append(mode.toUpper() + " scout failed to start.");
+            completeAuxiliaryScoutRun(automaticRun);
+        }
+    }
+
+    void cancelAuxiliaryScout() {
+        if (!auxiliaryScoutProcess_) {
+            return;
+        }
+        const QString mode = auxiliaryScoutMode_;
+        const bool automaticRun = auxiliaryScoutAutomaticRun_;
+        QProcess *process = auxiliaryScoutProcess_;
+        auxiliaryScoutProcess_ = nullptr;
+        auxiliaryScoutMode_.clear();
+        auxiliaryScoutAutomaticRun_ = false;
+        process->terminate();
+        QTimer::singleShot(250, process, [process]() {
+            if (process->state() != QProcess::NotRunning) {
+                process->kill();
+            }
+        });
+        QLabel *statusLabel = mode == "spin" ? playSpinScoutStatusLabel_ : playRenScoutStatusLabel_;
+        if (statusLabel) {
+            statusLabel->setText("Scout canceled");
+        }
+        DiagnosticLog::instance().append(mode.toUpper() + " scout canceled.");
+        completeAuxiliaryScoutRun(automaticRun);
+    }
+
+    void previewAuxiliaryScoutResult(const QString &mode) {
+        const QString code = mode == "spin" ? playSpinScoutFumen_ : playRenScoutFumen_;
+        QLabel *statusLabel = mode == "spin" ? playSpinScoutStatusLabel_ : playRenScoutStatusLabel_;
+        if (activeAuxiliaryPreviewMode_ == mode) {
+            activeAuxiliaryPreviewMode_.clear();
+            refreshPlaySolutionOverlay();
+            if (statusLabel) {
+                statusLabel->setText("Preview hidden");
+            }
+            updateAuxiliaryScoutControls();
+            return;
+        }
+        if (code.isEmpty()) {
+            return;
+        }
+        activeAuxiliaryPreviewMode_ = mode;
+        refreshPlaySolutionOverlay();
+        if (statusLabel) {
+            statusLabel->setText(
+                mode == "spin"
+                    ? "Showing the T-spin setup on the playfield"
+                    : "Showing the next placement required to continue the combo");
+        }
+        updateAuxiliaryScoutControls();
+    }
+
+    void updatePCScoutControls() {
+        const bool enabled = playPCEnabledCheck_ && playPCEnabledCheck_->isChecked();
+        const bool running = pcScoutProcess_ != nullptr;
+        const bool blocked = process_ != nullptr || auxiliaryScoutProcess_ != nullptr;
+        if (playPCSourceBox_) {
+            playPCSourceBox_->setEnabled(enabled && !running && !blocked);
+        }
+        if (playPCDropBox_) {
+            playPCDropBox_->setEnabled(enabled && !running && !blocked);
+        }
+        if (playPCShowSolutionButton_) {
+            playPCShowSolutionButton_->setText(
+                pcScoutSolutionRequested_ ? "Hide Solution" : "Show Solution");
+            const bool canEnablePreview =
+                !running
+                && process_ == nullptr
+                && auxiliaryScoutProcess_ == nullptr
+                && pcScoutSuccessfulTarget_.has_value();
+            playPCShowSolutionButton_->setEnabled(
+                enabled && (pcScoutSolutionRequested_ || canEnablePreview));
+        }
+        if (playPCCancelButton_) {
+            playPCCancelButton_->setEnabled(running);
+        }
+        updateAuxiliaryScoutControls();
+    }
+
+    void invalidatePCScout(
+        const QString &status = "Board changed; checking again",
+        bool preserveSolutionOverlay = false,
+        bool preserveSolutionRequest = false
+    ) {
+        if (pcScoutRefreshTimer_) {
+            pcScoutRefreshTimer_->stop();
+        }
+        if (pcScoutProcess_) {
+            QProcess *process = pcScoutProcess_;
+            pcScoutProcess_ = nullptr;
+            process->terminate();
+            QTimer::singleShot(250, process, [process]() {
+                if (process->state() != QProcess::NotRunning) {
+                    process->kill();
+                }
+            });
+        }
+        pcScoutTargets_.clear();
+        pcScoutResultLines_.clear();
+        pcScoutOutput_.clear();
+        pcScoutFound_ = false;
+        pcScoutBuildingSolution_ = false;
+        pcScoutSuccessfulTarget_.reset();
+        pcScoutSuccessfulPattern_.clear();
+        pcScoutSuccessfulFieldPath_.clear();
+        pcScoutSuccessfulDrop_.clear();
+        if (!preserveSolutionOverlay) {
+            pcScoutSolutionCells_.fill(0);
+            pcScoutSolutionVisible_ = false;
+        }
+        if (!preserveSolutionRequest) {
+            pcScoutSolutionRequested_ = false;
+            pcScoutSolutionNeedsRefresh_ = false;
+        }
+        if (playPCResultsLabel_) {
+            playPCResultsLabel_->clear();
+        }
+        if (playPCStatusLabel_) {
+            playPCStatusLabel_->setText(status);
+        }
+        refreshPlaySolutionOverlay();
+        updatePCScoutControls();
+    }
+
+    void suspendPCScoutSolutionPreview() {
+        if (!pcScoutSolutionRequested_) {
+            return;
+        }
+        pcScoutSolutionCells_.fill(0);
+        pcScoutSolutionVisible_ = false;
+        pcScoutSolutionNeedsRefresh_ = true;
+        refreshPlaySolutionOverlay();
+        updatePCScoutControls();
+    }
+
+    void schedulePCScout(bool immediate = false, bool afterPlacement = false) {
+        const bool enabled = playPCEnabledCheck_ && playPCEnabledCheck_->isChecked();
+        const bool hadPendingRefresh = pcScoutRefreshTimer_ && pcScoutRefreshTimer_->isActive();
+        if (!enabled) {
+            const bool needsReset = pcScoutProcess_
+                || (pcScoutRefreshTimer_ && pcScoutRefreshTimer_->isActive())
+                || !pcScoutTargets_.empty()
+                || !pcScoutResultLines_.isEmpty()
+                || !pcScoutOutput_.isEmpty()
+                || (playPCStatusLabel_ && playPCStatusLabel_->text() != "PC Scout is off");
+            if (needsReset) {
+                invalidatePCScout("PC Scout is off");
+            }
+            return;
+        }
+        const bool clearedLine = afterPlacement && playGame_.last_clear_lines > 0;
+        const bool preserveRequest = pcScoutSolutionRequested_;
+        const bool preserveOverlay = preserveRequest && !clearedLine;
+        if (preserveRequest && (clearedLine || !pcScoutSolutionVisible_)) {
+            pcScoutSolutionNeedsRefresh_ = true;
+        }
+        const bool wasRunning = pcScoutProcess_ != nullptr;
+        std::array<SFTPCScoutCandidate, 1> candidate{};
+        if (sft_game_pc_scout_candidates(&playGame_, 7, candidate.data(), 1) <= 0) {
+            suspendPCScoutSolutionPreview();
+            invalidatePCScout(
+                "No perfect-clear window exists within 7 pieces",
+                false,
+                preserveRequest);
+            return;
+        }
+        invalidatePCScout(
+            "Waiting to check the current position...",
+            preserveOverlay,
+            preserveRequest);
+        if (!pcScoutRefreshTimer_) {
+            return;
+        }
+        const int delayMs = immediate ? 0 : (afterPlacement ? (wasRunning || hadPendingRefresh ? 75 : 0) : 250);
+        pcScoutRefreshTimer_->start(delayMs);
+    }
+
+    void runPCScout() {
+        if (!playPCEnabledCheck_ || !playPCEnabledCheck_->isChecked()) {
+            if (playPCStatusLabel_) {
+                playPCStatusLabel_->setText("PC Scout is off");
+            }
+            return;
+        }
+        if (process_ || auxiliaryScoutProcess_) {
+            playPCStatusLabel_->setText("Another sfinder search is running");
+            return;
+        }
+        if (pcScoutProcess_) {
+            return;
+        }
+
+        std::array<SFTPCScoutCandidate, 2> candidates{};
+        const int candidateCount = sft_game_pc_scout_candidates(
+            &playGame_, 7, candidates.data(), static_cast<int>(candidates.size()));
+        pcScoutResultLines_.clear();
+        pcScoutFound_ = false;
+        playPCResultsLabel_->clear();
+        if (candidateCount <= 0) {
+            suspendPCScoutSolutionPreview();
+            playPCStatusLabel_->setText("No perfect-clear window exists within 7 pieces");
+            DiagnosticLog::instance().append("PC Scout found no eligible window within 7 pieces.");
+            return;
+        }
+
+        pcScoutTargets_.clear();
+        for (int index = 0; index < std::min(candidateCount, static_cast<int>(candidates.size())); ++index) {
+            pcScoutTargets_.push_back({candidates[index].pieces, candidates[index].clear_lines});
+        }
+        pcScoutGame_ = playGame_;
+        pcScoutUsesActiveQueue_ = playPCSourceBox_->currentData().toString() == "active";
+        pcScoutTargetIndex_ = 0;
+        updatePCScoutControls();
+        startNextPCScoutTarget();
+    }
+
+    void startNextPCScoutTarget() {
+        if (pcScoutTargetIndex_ >= static_cast<int>(pcScoutTargets_.size())) {
+            updatePCScoutControls();
+            if (!pcScoutFound_) {
+                suspendPCScoutSolutionPreview();
+            }
+            if (pcScoutSolutionRequested_
+                && pcScoutSolutionNeedsRefresh_
+                && pcScoutSuccessfulTarget_.has_value()) {
+                startPCScoutSolution();
+                return;
+            }
+            playPCStatusLabel_->setText(
+                pcScoutFound_ ? "PC Scout finished" : "No perfect clear found in the checked windows");
+            return;
+        }
+
+        const PCScoutTarget target = pcScoutTargets_[pcScoutTargetIndex_];
+        playPCStatusLabel_->setText(QString("Checking %1-piece window...").arg(target.pieces));
+        std::array<char, SFT_GAME_FIELD_TEXT_CAPACITY> field{};
+        const int fieldLength = sft_game_write_sfinder_field(
+            &pcScoutGame_,
+            target.clearLines,
+            field.data(),
+            static_cast<int>(field.size()));
+        if (fieldLength <= 0) {
+            updatePCScoutControls();
+            playPCStatusLabel_->setText("Could not prepare the current field");
+            return;
+        }
+        pcScoutFieldPath_ = writeTextFile(
+            "pc-scout-field.txt",
+            QString::fromUtf8(field.data(), fieldLength));
+        const int patternDepth = pcScoutUsesActiveQueue_
+            ? target.pieces
+            : std::min(target.pieces + 1, 7);
+        QString searchPattern = QString("*p%1").arg(patternDepth);
+        if (pcScoutUsesActiveQueue_) {
+            std::array<char, SFT_GAME_PATTERN_TEXT_CAPACITY> pattern{};
+            const int patternLength = sft_game_write_active_patterns(
+                &pcScoutGame_,
+                patternDepth,
+                pattern.data(),
+                static_cast<int>(pattern.size()));
+            if (patternLength <= 0) {
+                updatePCScoutControls();
+                playPCStatusLabel_->setText("Could not read the active piece queue");
+                return;
+            }
+            searchPattern = QString::fromLatin1(pattern.data(), patternLength);
+        }
+        const QString targetFieldPath = pcScoutFieldPath_;
+        const QString targetDrop = playPCDropBox_->currentData().toString();
+        const bool targetUsesActiveQueue = pcScoutUsesActiveQueue_;
+        auto launch = sfinderLaunchCommand();
+        QStringList args = launch.second;
+        args << "percent"
+             << "-fp" << targetFieldPath
+             << "-c" << QString::number(target.clearLines)
+             << "-p" << searchPattern
+             << "-H" << (targetUsesActiveQueue ? "avoid" : "use")
+             << "-d" << targetDrop
+             << "-K" << "srs"
+             << "-th" << "1"
+             << "-fc" << "0"
+             << "-td" << "0";
+
+        pcScoutOutput_.clear();
+        DiagnosticLog::instance().append(
+            QString("PC Scout launched: %1 %2").arg(launch.first, args.join(" ")));
+        QProcess *process = new QProcess(this);
+        pcScoutProcess_ = process;
+        updatePCScoutControls();
+        process->setWorkingDirectory(repoRoot_);
+        process->setProcessChannelMode(QProcess::MergedChannels);
+#ifdef Q_OS_WIN
+        process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *arguments) {
+            constexpr unsigned long kCreateNoWindow = 0x08000000UL;
+            arguments->flags |= kCreateNoWindow;
+        });
+#endif
+        connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+            if (pcScoutProcess_ == process) {
+                pcScoutOutput_ += QString::fromLocal8Bit(process->readAllStandardOutput());
+            } else {
+                process->readAllStandardOutput();
+            }
+        });
+        connect(process, &QProcess::finished, this, [
+                    this,
+                    process,
+                    target,
+                    searchPattern,
+                    targetFieldPath,
+                    targetDrop,
+                    targetUsesActiveQueue
+                ](int exitCode, QProcess::ExitStatus exitStatus) {
+            const QString output = pcScoutOutput_ + QString::fromLocal8Bit(process->readAllStandardOutput());
+            process->deleteLater();
+            if (pcScoutProcess_ != process) {
+                return;
+            }
+            pcScoutProcess_ = nullptr;
+
+            const QRegularExpression resultPattern(
+                R"(success\s*=\s*([0-9]+(?:\.[0-9]+)?)%\s*\((\d+)/(\d+)\))");
+            const QRegularExpressionMatch match = resultPattern.match(output);
+            if (exitStatus != QProcess::NormalExit || exitCode != 0 || !match.hasMatch()) {
+                updatePCScoutControls();
+                playPCStatusLabel_->setText(
+                    exitStatus == QProcess::NormalExit && exitCode == 15
+                        ? "PC Scout canceled"
+                        : "PC Scout could not read sfinder's result");
+                appendRawOutput(
+                    QString("\nPC Scout failed for %1 pieces:\n%2\n").arg(target.pieces).arg(output));
+                DiagnosticLog::instance().appendBlock(
+                    QString("PC Scout failed for %1 pieces").arg(target.pieces),
+                    {QString("exit %1").arg(exitCode), output.trimmed()});
+                return;
+            }
+
+            const QString percent = match.captured(1);
+            const QString successes = match.captured(2);
+            const QString total = match.captured(3);
+            pcScoutFound_ = pcScoutFound_ || successes.toInt() > 0;
+            if (successes.toInt() > 0 && !pcScoutSuccessfulTarget_.has_value()) {
+                pcScoutSuccessfulTarget_ = target;
+                pcScoutSuccessfulPattern_ = searchPattern;
+                pcScoutSuccessfulFieldPath_ = targetFieldPath;
+                pcScoutSuccessfulDrop_ = targetDrop;
+                pcScoutSuccessfulUsesActiveQueue_ = targetUsesActiveQueue;
+            }
+            const QString result = pcScoutUsesActiveQueue_
+                ? (successes.toInt() > 0 ? "Available" : "No PC")
+                : percent + "%";
+            pcScoutResultLines_ << QString(
+                "<b>PC in %1 pieces: %2</b><br><span style=\"color:#b7b7b7\">%3/%4 %5 · %6 lines</span>")
+                .arg(target.pieces)
+                .arg(result)
+                .arg(successes)
+                .arg(total)
+                .arg(pcScoutUsesActiveQueue_ ? "hold routes" : "bags")
+                .arg(target.clearLines);
+            playPCResultsLabel_->setText(pcScoutResultLines_.join("<br><br>"));
+            DiagnosticLog::instance().append(
+                QString("PC Scout %1-piece result: %2/%3 (%4%)")
+                    .arg(target.pieces)
+                    .arg(successes)
+                    .arg(total)
+                    .arg(percent));
+            ++pcScoutTargetIndex_;
+            startNextPCScoutTarget();
+        });
+
+        process->start(launch.first, args);
+        if (!process->waitForStarted(1000)) {
+            pcScoutProcess_ = nullptr;
+            process->deleteLater();
+            updatePCScoutControls();
+            playPCStatusLabel_->setText("PC Scout failed to start sfinder");
+            DiagnosticLog::instance().append("PC Scout failed to start sfinder.");
+        }
+    }
+
+    std::optional<std::array<int, kColumns * kRows>> pcScoutOverlayForCode(
+        const QString &code,
+        int *addedCellCount = nullptr
+    ) const {
+        return scoutOverlayForCode(code, pcScoutGame_, false, addedCellCount);
+    }
+
+    void togglePCScoutSolution() {
+        if (pcScoutSolutionRequested_) {
+            pcScoutSolutionRequested_ = false;
+            pcScoutSolutionNeedsRefresh_ = false;
+            if (pcScoutBuildingSolution_ && pcScoutProcess_) {
+                cancelPCScout();
+            }
+            pcScoutSolutionVisible_ = false;
+            pcScoutSolutionCells_.fill(0);
+            refreshPlaySolutionOverlay();
+            if (playPCStatusLabel_) {
+                playPCStatusLabel_->setText("Solution preview hidden");
+            }
+            updatePCScoutControls();
+            return;
+        }
+
+        activeAuxiliaryPreviewMode_.clear();
+        updateAuxiliaryScoutControls();
+        pcScoutSolutionRequested_ = true;
+        const bool hasCachedOverlay = std::any_of(
+            pcScoutSolutionCells_.begin(),
+            pcScoutSolutionCells_.end(),
+            [](int value) { return value > 0; });
+        if (hasCachedOverlay) {
+            pcScoutSolutionVisible_ = true;
+            refreshPlaySolutionOverlay();
+            playPCStatusLabel_->setText("Showing the perfect-clear solution");
+            updatePCScoutControls();
+            return;
+        }
+        if (!pcScoutSuccessfulTarget_.has_value()) {
+            playPCStatusLabel_->setText("Waiting for PC Scout to find a solution");
+            updatePCScoutControls();
+            return;
+        }
+        startPCScoutSolution();
+    }
+
+    void startPCScoutSolution() {
+        if (!pcScoutSolutionRequested_
+            || !pcScoutSuccessfulTarget_.has_value()
+            || pcScoutProcess_
+            || process_
+            || auxiliaryScoutProcess_) {
+            updatePCScoutControls();
+            return;
+        }
+
+        const PCScoutTarget target = pcScoutSuccessfulTarget_.value();
+        QDir runDir(appDataDir());
+        runDir.mkpath("run");
+        const QString outputBase = runDir.filePath("run/pc-scout-solution");
+        QFile::remove(outputBase + "_minimal.html");
+        QFile::remove(outputBase + "_unique.html");
+
+        auto launch = sfinderLaunchCommand();
+        QStringList args = launch.second;
+        args << "path"
+             << "-fp" << pcScoutSuccessfulFieldPath_
+             << "-c" << QString::number(target.clearLines)
+             << "-p" << pcScoutSuccessfulPattern_
+             << "-H" << (pcScoutSuccessfulUsesActiveQueue_ ? "avoid" : "use")
+             << "-d" << pcScoutSuccessfulDrop_
+             << "-K" << "srs"
+             << "-th" << "1"
+             << "-f" << "html"
+             << "-o" << outputBase
+             << "-s" << "no"
+             << "-so" << "yes";
+
+        pcScoutOutput_.clear();
+        pcScoutBuildingSolution_ = true;
+        playPCStatusLabel_->setText("Finding a concrete PC route...");
+        DiagnosticLog::instance().append(
+            QString("PC solution preview launched: %1 %2").arg(launch.first, args.join(" ")));
+
+        QProcess *process = new QProcess(this);
+        pcScoutProcess_ = process;
+        updatePCScoutControls();
+        process->setWorkingDirectory(repoRoot_);
+        process->setProcessChannelMode(QProcess::MergedChannels);
+#ifdef Q_OS_WIN
+        process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *arguments) {
+            constexpr unsigned long kCreateNoWindow = 0x08000000UL;
+            arguments->flags |= kCreateNoWindow;
+        });
+#endif
+        connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+            if (pcScoutProcess_ == process) {
+                pcScoutOutput_ += QString::fromLocal8Bit(process->readAllStandardOutput());
+            } else {
+                process->readAllStandardOutput();
+            }
+        });
+        connect(process, &QProcess::finished, this, [
+                    this,
+                    process,
+                    outputBase,
+                    target
+                ](int exitCode, QProcess::ExitStatus exitStatus) {
+            const QString output = pcScoutOutput_ + QString::fromLocal8Bit(process->readAllStandardOutput());
+            process->deleteLater();
+            if (pcScoutProcess_ != process) {
+                return;
+            }
+            pcScoutProcess_ = nullptr;
+            pcScoutBuildingSolution_ = false;
+
+            if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+                playPCStatusLabel_->setText("Could not generate the PC solution");
+                DiagnosticLog::instance().appendBlock(
+                    "PC solution preview failed",
+                    {QString("exit %1").arg(exitCode), output.trimmed()});
+                updatePCScoutControls();
+                return;
+            }
+
+            QString resultPath = outputBase + "_minimal.html";
+            if (!QFileInfo::exists(resultPath)) {
+                resultPath = outputBase + "_unique.html";
+            }
+            QFile resultFile(resultPath);
+            if (!resultFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                playPCStatusLabel_->setText("sfinder did not create a readable solution");
+                DiagnosticLog::instance().append(
+                    "PC solution preview failed: no readable path output.");
+                updatePCScoutControls();
+                return;
+            }
+
+            const QString html = QString::fromUtf8(resultFile.readAll());
+            const QRegularExpression codePattern("v115@[A-Za-z0-9+/\\?]+");
+            QRegularExpressionMatchIterator matches = codePattern.globalMatch(html);
+            QStringList codes;
+            while (matches.hasNext()) {
+                const QString code = matches.next().captured(0);
+                if (!codes.contains(code)) {
+                    codes.push_back(code);
+                }
+            }
+
+            std::optional<std::array<int, kColumns * kRows>> overlay;
+            int overlayCells = 0;
+            for (int index = codes.size() > 1 ? 1 : 0; index < codes.size(); ++index) {
+                overlay = pcScoutOverlayForCode(codes[index], &overlayCells);
+                if (overlay.has_value()) {
+                    break;
+                }
+            }
+            if (!overlay.has_value() && codes.size() > 1) {
+                overlay = pcScoutOverlayForCode(codes.front(), &overlayCells);
+            }
+            if (!overlay.has_value()) {
+                playPCStatusLabel_->setText("Could not decode sfinder's solution");
+                DiagnosticLog::instance().appendBlock(
+                    "PC solution preview decode failed",
+                    {QString("Fumen links found: %1").arg(codes.size()), resultPath});
+                updatePCScoutControls();
+                return;
+            }
+
+            pcScoutSolutionCells_ = overlay.value();
+            pcScoutSolutionVisible_ = true;
+            pcScoutSolutionNeedsRefresh_ = false;
+            refreshPlaySolutionOverlay();
+            playPCStatusLabel_->setText(
+                QString("Showing a %1-piece PC solution").arg(target.pieces));
+            DiagnosticLog::instance().append(
+                QString("PC solution preview displayed %1 translucent cells from %2.")
+                    .arg(overlayCells)
+                    .arg(resultPath));
+            updatePCScoutControls();
+        });
+
+        process->start(launch.first, args);
+        if (!process->waitForStarted(1000)) {
+            pcScoutProcess_ = nullptr;
+            pcScoutBuildingSolution_ = false;
+            process->deleteLater();
+            playPCStatusLabel_->setText("PC solution search failed to start");
+            DiagnosticLog::instance().append("PC solution preview failed to start sfinder.");
+            updatePCScoutControls();
+        }
+    }
+
+    void cancelPCScout() {
+        if (!pcScoutProcess_) {
+            return;
+        }
+        const bool wasBuildingSolution = pcScoutBuildingSolution_;
+        QProcess *process = pcScoutProcess_;
+        pcScoutProcess_ = nullptr;
+        pcScoutBuildingSolution_ = false;
+        process->terminate();
+        QTimer::singleShot(250, process, [process]() {
+            if (process->state() != QProcess::NotRunning) {
+                process->kill();
+            }
+        });
+        updatePCScoutControls();
+        playPCStatusLabel_->setText(
+            wasBuildingSolution ? "Solution preview canceled" : "PC Scout canceled");
+        DiagnosticLog::instance().append(
+            wasBuildingSolution ? "PC solution preview canceled." : "PC Scout canceled.");
+    }
+
     QString outputBaseForCommand(const QString &command) const {
         QDir dir(appDataDir());
         dir.mkpath("run");
@@ -3501,7 +7196,7 @@ pre, code {
     }
 
     void runSearch() {
-        if (process_) {
+        if (process_ || pcScoutProcess_ || auxiliaryScoutProcess_) {
             return;
         }
 
@@ -3513,6 +7208,7 @@ pre, code {
             showingOutputFileContent_ = false;
             rawOutputLog_ = "Setup input failed: " + setupError + "\n";
             refreshDisplayedOutput();
+            DiagnosticLog::instance().append("Setup input failed: " + setupError);
             return;
         }
         const QString fieldPath = writeTextFile(command == "setup" ? "setup-field.txt" : "field.txt", fieldText);
@@ -3520,24 +7216,12 @@ pre, code {
         const QString patternsPath = writeTextFile("patterns.txt", patterns + "\n");
         const QString outputBase = outputBaseForCommand(command);
 
-        QString program;
-        QStringList args;
-        const QString linuxLauncher = repoRoot_ + "/native-linux/bin/sfinder";
-        const QString macLauncher = repoRoot_ + "/native-macos/bin/sfinder";
-#ifndef Q_OS_WIN
-        if (QFileInfo::exists(linuxLauncher)) {
-            program = linuxLauncher;
-        } else if (QFileInfo::exists(macLauncher) && QSysInfo::productType() == "macos") {
-            program = macLauncher;
-        } else {
-            program = "java";
-            args << "-jar" << repoRoot_ + "/solution-finder-1.43/sfinder.jar";
-        }
-#else
-        program = "java.exe";
-        args << "-jar" << repoRoot_ + "/solution-finder-1.43/sfinder.jar";
-#endif
+        auto launch = sfinderLaunchCommand();
+        const QString program = launch.first;
+        QStringList args = launch.second;
         args << buildSfinderArguments(fieldPath, patternsPath, outputBase);
+        DiagnosticLog::instance().append(
+            QString("sfinder launched: %1 %2").arg(program, args.join(" ")));
 
         showingOutputFileContent_ = false;
         rawOutputLog_ = "$ " + program + " " + args.join(" ") + "\n\n";
@@ -3572,10 +7256,18 @@ pre, code {
             runButton_->setEnabled(true);
             cancelButton_->setEnabled(false);
             refreshGeneratedFiles();
+            updatePCScoutControls();
+            updateAuxiliaryScoutControls();
+            DiagnosticLog::instance().append(
+                QString("sfinder finished: exit %1 (%2)")
+                    .arg(exitCode)
+                    .arg(status == QProcess::NormalExit ? "normal" : "crashed"));
         });
 
         runButton_->setEnabled(false);
         cancelButton_->setEnabled(true);
+        updatePCScoutControls();
+        updateAuxiliaryScoutControls();
         process_->start(program, args);
         if (!process_->waitForStarted(1000)) {
             appendRawOutput("Failed to start sfinder process.\n");
@@ -3583,6 +7275,9 @@ pre, code {
             process_ = nullptr;
             runButton_->setEnabled(true);
             cancelButton_->setEnabled(false);
+            updatePCScoutControls();
+            updateAuxiliaryScoutControls();
+            DiagnosticLog::instance().append("sfinder failed to start.");
         }
     }
 
@@ -3594,6 +7289,7 @@ pre, code {
         if (!process_->waitForFinished(1500)) {
             process_->kill();
         }
+        DiagnosticLog::instance().append("sfinder search canceled.");
     }
 
     QString repoRoot_;
@@ -3626,25 +7322,99 @@ pre, code {
     QListWidget *outputFilesList_ = nullptr;
     QTabBar *sectionTabs_ = nullptr;
     QStackedWidget *centerStack_ = nullptr;
+    QWidget *searchSettingsPanel_ = nullptr;
+    QWidget *playSettingsPanel_ = nullptr;
     BoardWidget *playBoard_ = nullptr;
     QLabel *playStatusLabel_ = nullptr;
-    QLabel *playQueueLabel_ = nullptr;
+    QLabel *playPiecesLabel_ = nullptr;
+    QLabel *playLinesLabel_ = nullptr;
+    QLabel *playLevelLabel_ = nullptr;
+    QLabel *playPpsLabel_ = nullptr;
+    QLabel *playClearLabel_ = nullptr;
+    QLabel *playDetectionLabel_ = nullptr;
+    QComboBox *playPCDropBox_ = nullptr;
+    QCheckBox *playPCEnabledCheck_ = nullptr;
+    QComboBox *playPCSourceBox_ = nullptr;
+    QPushButton *playPCShowSolutionButton_ = nullptr;
+    QPushButton *playPCCancelButton_ = nullptr;
+    QLabel *playPCResultsLabel_ = nullptr;
+    QLabel *playPCStatusLabel_ = nullptr;
+    QTabWidget *playScoutTabs_ = nullptr;
+    QComboBox *playSpinScoutLinesBox_ = nullptr;
+    QSpinBox *playSpinScoutPiecesSpin_ = nullptr;
+    QCheckBox *playSpinScoutAutoCheck_ = nullptr;
+    QPushButton *playSpinScoutButton_ = nullptr;
+    QPushButton *playSpinScoutCancelButton_ = nullptr;
+    QPushButton *playSpinScoutPreviewButton_ = nullptr;
+    QLabel *playSpinScoutResultLabel_ = nullptr;
+    QLabel *playSpinScoutStatusLabel_ = nullptr;
+    QSpinBox *playRenScoutPiecesSpin_ = nullptr;
+    QComboBox *playRenScoutDropBox_ = nullptr;
+    QCheckBox *playRenScoutAutoCheck_ = nullptr;
+    QPushButton *playRenScoutButton_ = nullptr;
+    QPushButton *playRenScoutCancelButton_ = nullptr;
+    QPushButton *playRenScoutPreviewButton_ = nullptr;
+    QLabel *playRenScoutResultLabel_ = nullptr;
+    QLabel *playRenScoutStatusLabel_ = nullptr;
     QLineEdit *playQueueEdit_ = nullptr;
+    QComboBox *playHoldBox_ = nullptr;
+    std::array<QLineEdit *, 10> playControlEdits_{};
+    QSpinBox *playDasSpin_ = nullptr;
+    QSpinBox *playArrSpin_ = nullptr;
+    QSpinBox *playSoftSpin_ = nullptr;
+    QComboBox *playGravityLevelBox_ = nullptr;
+    QSpinBox *playLockSpin_ = nullptr;
+    QSpinBox *playMoveResetLimitSpin_ = nullptr;
+    QSpinBox *playPreviewSpin_ = nullptr;
+    QCheckBox *playGravityCheck_ = nullptr;
+    QCheckBox *playLevelProgressionCheck_ = nullptr;
+    QCheckBox *playMoveResetCheck_ = nullptr;
+    QCheckBox *playStepResetCheck_ = nullptr;
+    QCheckBox *playInfiniteLockCheck_ = nullptr;
+    QCheckBox *playInfiniteHoldCheck_ = nullptr;
+    QCheckBox *playExportActiveCheck_ = nullptr;
+    PiecePreviewWidget *playHoldPreview_ = nullptr;
+    std::array<PiecePreviewWidget *, 5> playNextPreviews_{};
+    QPushButton *playUndoButton_ = nullptr;
+    QTimer *playTimer_ = nullptr;
+    QTimer *playInputTimer_ = nullptr;
+    QTimer *playFumenSyncTimer_ = nullptr;
     QTextBrowser *centerOutputBrowser_ = nullptr;
     QComboBox *outputFileBox_ = nullptr;
     BoardWidget *previewBoard_ = nullptr;
     QComboBox *previewCodeBox_ = nullptr;
     QLabel *previewPageLabel_ = nullptr;
+    QPushButton *screenshotButton_ = nullptr;
     QPushButton *runButton_ = nullptr;
     QPushButton *cancelButton_ = nullptr;
     std::vector<int> paintValues_;
     std::vector<QPushButton *> paintButtons_;
     std::vector<std::array<int, kFumenBlocks>> fumenPages_;
     std::vector<FumenOperation> fumenOperations_;
-    std::array<int, kColumns * kRows> playCells_{};
-    PlayPiece currentPlayPiece_;
-    std::vector<int> playQueue_;
-    std::mt19937 rng_{std::random_device{}()};
+    SFTGameState playGame_{};
+    SFTGameState pcScoutGame_{};
+    SFTGameState auxiliaryScoutGame_{};
+    std::vector<PlayUndoSnapshot> playUndoStack_;
+    QHash<int, HeldPlayInput> heldPlayInputs_;
+    bool updatingPlayLevelLock_ = false;
+    int playConfiguredGravityLevel_ = 1;
+    int playConfiguredLockDelay_ = 500;
+    QElapsedTimer playFrameClock_;
+    QElapsedTimer playInputClock_;
+    quint64 playRenderSerial_ = 0;
+    int playStatsRefreshElapsedMs_ = 0;
+    QElapsedTimer playStatsClock_;
+    int playInputPressCounter_ = 0;
+    int playLastExportedPieces_ = 0;
+    int playOpeningCycleStartPieces_ = 0;
+    bool playHasStarted_ = false;
+    bool playFumenEditorDirty_ = false;
+    bool loadingPlaySettings_ = false;
+    bool playOpenerDetectionDone_ = false;
+    bool playVariantDetectionDone_ = false;
+    bool playEarlyVariantDetection_ = false;
+    QString playDetectedOpenerName_;
+    std::optional<bool> playDetectedOpenerMirrored_;
     std::vector<std::array<int, kFumenBlocks>> previewPages_;
     std::vector<FumenOperation> previewOperations_;
     QString currentPreviewCode_;
@@ -3658,6 +7428,38 @@ pre, code {
     bool showingOutputFileContent_ = false;
     bool setupModeActive_ = false;
     QProcess *process_ = nullptr;
+    QProcess *pcScoutProcess_ = nullptr;
+    QProcess *auxiliaryScoutProcess_ = nullptr;
+    QTimer *auxiliaryScoutRefreshTimer_ = nullptr;
+    QStringList auxiliaryAutoQueue_;
+    bool auxiliaryScoutAutomaticRun_ = false;
+    QString auxiliaryScoutMode_;
+    QString auxiliaryScoutOutput_;
+    QString playSpinScoutFumen_;
+    QString playRenScoutFumen_;
+    std::array<int, kColumns * kRows> playSpinScoutOverlayCells_{};
+    std::array<int, kColumns * kRows> playRenScoutOverlayCells_{};
+    QString activeAuxiliaryPreviewMode_;
+    QTimer *pcScoutRefreshTimer_ = nullptr;
+    std::vector<PCScoutTarget> pcScoutTargets_;
+    QStringList pcScoutResultLines_;
+    QString pcScoutOutput_;
+    QString pcScoutFieldPath_;
+    std::optional<PCScoutTarget> pcScoutSuccessfulTarget_;
+    QString pcScoutSuccessfulPattern_;
+    QString pcScoutSuccessfulFieldPath_;
+    QString pcScoutSuccessfulDrop_;
+    std::array<int, kColumns * kRows> pcScoutSolutionCells_{};
+    int pcScoutTargetIndex_ = 0;
+    bool pcScoutFound_ = false;
+    bool pcScoutUsesActiveQueue_ = true;
+    bool pcScoutSuccessfulUsesActiveQueue_ = true;
+    bool pcScoutBuildingSolution_ = false;
+    bool pcScoutSolutionRequested_ = false;
+    bool pcScoutSolutionNeedsRefresh_ = false;
+    bool pcScoutSolutionVisible_ = false;
+    QPointer<OpenerImporterDialog> openerImporterDialog_;
+    QPointer<OutputLogDialog> outputLogDialog_;
 };
 
 void applyAppTheme(QApplication &app) {
@@ -3725,6 +7527,13 @@ void applyAppTheme(QApplication &app) {
             background-color: #484848;
             border-color: #555555;
         }
+        QPushButton#primaryButton {
+            background-color: #0a6edb;
+            border-color: #1884ef;
+        }
+        QPushButton#primaryButton:hover {
+            background-color: #117ce8;
+        }
         QComboBox, QSpinBox, QLineEdit, QPlainTextEdit {
             background-color: #232323;
             color: #f1f1f1;
@@ -3763,6 +7572,12 @@ void applyAppTheme(QApplication &app) {
         QCheckBox {
             spacing: 6px;
         }
+        QSplitter#mainSplitter::handle {
+            background-color: #555555;
+        }
+        QScrollArea, QScrollArea > QWidget > QWidget {
+            background-color: #303030;
+        }
     )");
 }
 
@@ -3771,7 +7586,9 @@ void applyAppTheme(QApplication &app) {
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("Solution Finder Enhanced");
+    QGuiApplication::setApplicationDisplayName("Solution Finder Enhanced");
     QApplication::setOrganizationName("rustednuts69");
+    QApplication::setWindowIcon(QIcon(":/icons/app-icon.png"));
     applyAppTheme(app);
 
     MainWindow window;

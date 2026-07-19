@@ -54,8 +54,8 @@ cmake -S "${PROJECT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_I
 cmake --build "${BUILD_DIR}" --config Release
 DESTDIR="${APPDIR}" cmake --install "${BUILD_DIR}"
 
-mkdir -p "${APPDIR}/usr/share/applications" "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
-cp "${SCRIPT_DIR}/solution-finder-enhanced.svg" "${APPDIR}/usr/share/icons/hicolor/scalable/apps/${APP_ID}.svg"
+mkdir -p "${APPDIR}/usr/share/applications" "${APPDIR}/usr/share/icons/hicolor/256x256/apps"
+cp "${SCRIPT_DIR}/solution-finder-enhanced.png" "${APPDIR}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png"
 cat > "${APPDIR}/usr/share/applications/${APP_ID}.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
@@ -71,7 +71,7 @@ export EXTRA_QT_PLUGINS="${EXTRA_QT_PLUGINS:-platforms/libqxcb.so;imageformats}"
 "${LINUXDEPLOY}" \
   --appdir "${APPDIR}" \
   --desktop-file "${APPDIR}/usr/share/applications/${APP_ID}.desktop" \
-  --icon-file "${APPDIR}/usr/share/icons/hicolor/scalable/apps/${APP_ID}.svg" \
+  --icon-file "${APPDIR}/usr/share/icons/hicolor/256x256/apps/${APP_ID}.png" \
   --plugin qt \
   --output appimage
 
