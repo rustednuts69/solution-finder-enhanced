@@ -4,9 +4,12 @@ The Windows and Linux apps share the same Qt Widgets interface and application
 logic from `platforms/qt-common`. Windows keeps a small build layer for native
 packaging and its built-in region screenshot selector.
 
+The current build targets x64. Windows on ARM can run the x64 package through
+emulation, but a native ARM64 package is not currently provided.
+
 ## Requirements
 
-- Windows 10 or newer
+- 64-bit Windows 10 or Windows 11
 - Git
 - CMake 3.20 or newer
 - Qt 6 with the MSVC 2022 64-bit kit
@@ -15,20 +18,33 @@ packaging and its built-in region screenshot selector.
 
 ## Build
 
-For a fresh Windows 11 VM, open PowerShell as Administrator and run:
+For a fresh Windows 11 VM, open PowerShell as Administrator and install Git:
 
 ```powershell
+winget install --id Git.Git --exact --accept-package-agreements --accept-source-agreements
+```
+
+Close and reopen PowerShell so Git is available. Clone the repository, enter
+the Windows build folder, and run the prerequisite installer:
+
+```powershell
+git clone https://github.com/rustednuts69/solution-finder-enhanced.git
+cd solution-finder-enhanced\platforms\windows-qt
 Set-ExecutionPolicy -Scope Process Bypass
 .\install-prerequisites.ps1
 ```
+
+The prerequisite script installs CMake, a Java 21 runtime, and Visual Studio
+2022 Build Tools with the C++ workload.
 
 Install Qt using the official Qt Online Installer. In its component selector,
 choose a Qt 6 version and **MSVC 2022 64-bit**. Restart the VM afterward so the
 new command-line tools are available.
 
-Then open PowerShell in this folder and run:
+After restarting, open PowerShell and return to the cloned build folder:
 
 ```powershell
+cd solution-finder-enhanced\platforms\windows-qt
 Set-ExecutionPolicy -Scope Process Bypass
 .\build-windows.ps1
 ```
@@ -41,11 +57,9 @@ somewhere else, specify it explicitly:
 .\build-windows.ps1 -QtRoot "D:\Qt\6.8.3\msvc2022_64"
 ```
 
-The equivalent manual commands are:
+The equivalent manual build commands are:
 
 ```bat
-git clone https://github.com/rustednuts69/solution-finder-enhanced.git
-cd solution-finder-enhanced\platforms\windows-qt
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:\Qt\6.8.3\msvc2022_64
 cmake --build build --config Release
 ```
@@ -54,10 +68,10 @@ Replace the Qt path with the version installed on your machine. The post-build
 step copies the opener book and sfinder runtime beside the executable, so the
 build directory can run without referring back to the source tree.
 
-For a distributable folder, run Qt's deployment tool after compiling:
+For a manually deployed folder, run Qt's deployment tool after compiling:
 
 ```bat
-C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe --release build\Release\solution-finder-enhanced.exe
+C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe --release --compiler-runtime build\Release\solution-finder-enhanced.exe
 ```
 
 Run `build\Release\solution-finder-enhanced.exe` to test. A signed installer

@@ -122,19 +122,34 @@ The Windows app shares its interface and application logic with the Linux Qt
 build. It uses a built-in Windows region selector for screenshot import, so it
 does not require Flameshot or another screenshot utility.
 
-Install Qt 6, CMake, Visual Studio 2022 Build Tools, and Java. Then open an
-**x64 Native Tools Command Prompt for VS 2022** and run:
+The current Windows package targets x64. On a fresh Windows 11 VM, open
+PowerShell as Administrator and install Git:
 
-```bat
-git clone https://github.com/rustednuts69/solution-finder-enhanced.git
-cd solution-finder-enhanced\platforms\windows-qt
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:\Qt\6.8.3\msvc2022_64
-cmake --build build --config Release
-C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe --release build\Release\solution-finder-enhanced.exe
+```powershell
+winget install --id Git.Git --exact --accept-package-agreements --accept-source-agreements
 ```
 
-Replace `6.8.3` with the installed Qt version. More Windows-specific details are
-in `platforms/windows-qt/README.md`.
+Close and reopen PowerShell so Git is available, then clone the project and
+install the remaining prerequisites:
+
+```powershell
+git clone https://github.com/rustednuts69/solution-finder-enhanced.git
+cd solution-finder-enhanced\platforms\windows-qt
+Set-ExecutionPolicy -Scope Process Bypass
+.\install-prerequisites.ps1
+```
+
+Install Qt 6 with the **MSVC 2022 64-bit** component, restart Windows, and run:
+
+```powershell
+cd solution-finder-enhanced\platforms\windows-qt
+Set-ExecutionPolicy -Scope Process Bypass
+.\build-windows.ps1
+```
+
+The build creates
+`platforms\windows-qt\dist\Solution-Finder-Enhanced-Windows-x64.zip`.
+More details and manual commands are in `platforms/windows-qt/README.md`.
 
 ## Tests
 

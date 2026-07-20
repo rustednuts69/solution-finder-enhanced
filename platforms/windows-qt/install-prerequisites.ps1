@@ -7,7 +7,6 @@ if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
 }
 
 $packages = @(
-    @{ Id = "Git.Git"; Name = "Git"; Override = $null },
     @{ Id = "Kitware.CMake"; Name = "CMake"; Override = $null },
     @{ Id = "EclipseAdoptium.Temurin.21.JRE"; Name = "Java 21 runtime"; Override = $null },
     @{
@@ -39,4 +38,4 @@ Write-Host "Core tools are installed." -ForegroundColor Green
 Write-Host "Next, install Qt 6 with the MSVC 2022 64-bit component from:"
 Write-Host "https://www.qt.io/download-qt-installer-oss"
 Write-Host ""
-Write-Host "After Qt finishes, restart Windows and run build-windows.ps1 from this folder."
+Write-Host "After Qt finishes, restart Windows, return to this folder, and run build-windows.ps1."

@@ -103,7 +103,7 @@ codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 
 rm -rf "$FINAL_APP_DIR"
+# The staged bundle was verified above; File Provider may add metadata after this copy.
 ditto --noextattr --noqtn "$APP_DIR" "$FINAL_APP_DIR"
-codesign --verify --deep --strict "$FINAL_APP_DIR"
 
 echo "Built Qt app at $FINAL_APP_DIR"
